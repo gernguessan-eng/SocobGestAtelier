@@ -541,7 +541,7 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
   const immobilizedVehicles = vehicles.filter((item) => (item.status === "Immobilisé" || item.status === "En réparation") && isInPeriod(item.statusDate, dashboardPeriod.from, dashboardPeriod.to));
   // "En travaux" = tout ordre déjà arrivé à l'atelier, à l'exclusion des
   // rendez-vous simplement planifiés (véhicule pas encore sur place).
-  const vehiclesInGarage = orders.filter((item) => item.status !== "Planifié").length;
+  const vehiclesInGarage = orders.filter((item) => item.status !== "Planifié" && item.status !== "Terminé" && item.startDate <= todayIso && item.endDate >= todayIso).length;
   const garageOccupationRate = settings.garageCapacity > 0 ? Math.round((vehiclesInGarage / settings.garageCapacity) * 100) : 0;
   const [dashboardStatusFilter, setDashboardStatusFilter] = useState<"Tous" | Order["status"]>("Tous");
   const [capacityChartRange, setCapacityChartRange] = useState<"7" | "30">("7");
