@@ -9,8 +9,11 @@ import {
   saveDoc,
   saveDocs,
   saveSingletonDoc,
+  subscribeToCollection,
+  subscribeToDoc,
   uploadFileToStorage,
 } from "@/lib/data-service";
+import { exportToExcel, pickColumn, readExcelFile } from "@/lib/excel-io";
 
 type IconName =
   | "grid"
@@ -453,9 +456,13 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
   // Firestore project is empty, then reads from it on every subsequent load).
   useEffect(() => {
     let cancelled = false;
+    const unsubscribers: Array<() => void> = [];
     (async () => {
       try {
-        const [loadedOrders, loadedMechanics, loadedVehicles, loadedStock, loadedStockExits, loadedSettings] = await Promise.all([
+        // One-time bootstrap: seed the demo dataset only if Firestore is
+        // still empty (brand-new project). On every subsequent load this
+        // just reads back whatever is already there.
+        const [loadedOrders, , loadedVehicles] = await Promise.all([
           loadOrSeedCollection<Order>(ORDERS_COLLECTION, initialOrders),
           loadOrSeedCollection<Mechanic>(MECHANICS_COLLECTION, initialMechanics),
           loadOrSeedCollection<Vehicle>(VEHICLES_COLLECTION, initialVehicles),
@@ -464,7 +471,9 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
           loadOrSeedDoc(SETTINGS_COLLECTION, SETTINGS_DOC_ID, settings),
         ]);
         const seededPresenceEntries = initialPresenceEntries.map((entry) => ({ ...entry, id: presenceDocId(entry) }));
-        const loadedPresence = await loadOrSeedCollection<PresenceEntry & { id: string }>(PRESENCE_COLLECTION, seededPresenceEntries);
+        await loadOrSeedCollection<PresenceEntry & { id: string }>(PRESENCE_COLLECTION, seededPresenceEntries);
+        // One-time correction so vehicle statuses already match their
+        // orders before live sync takes over.
         const reconciledVehicles = loadedVehicles.map((vehicle) => {
           const nextStatus = vehicleStatusFromOrders(vehicle.id, loadedOrders);
           return nextStatus !== vehicle.status ? { ...vehicle, status: nextStatus, statusDate: new Date().toISOString().slice(0, 10) } : vehicle;
@@ -472,13 +481,19 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
         const changedVehicles = reconciledVehicles.filter((vehicle, idx) => vehicle !== loadedVehicles[idx]);
         if (changedVehicles.length) persist(saveDocs(VEHICLES_COLLECTION, changedVehicles), "vehicle status reconciliation");
         if (cancelled) return;
-        setOrders(loadedOrders);
-        setMechanics(loadedMechanics);
-        setVehicles(reconciledVehicles);
-        setStock(loadedStock);
-        setStockExits(loadedStockExits);
-        setPresenceEntries(loadedPresence);
-        setSettings((current) => ({ ...current, ...loadedSettings, alertEmails: loadedSettings.alertEmails ?? [], garageCapacity: loadedSettings.garageCapacity || current.garageCapacity }));
+
+        // From here on, the app stays live-synced with Firestore: any
+        // change made by any user, on any device, updates everyone's
+        // screen automatically — no manual refresh needed anywhere.
+        unsubscribers.push(subscribeToCollection<Order>(ORDERS_COLLECTION, setOrders));
+        unsubscribers.push(subscribeToCollection<Mechanic>(MECHANICS_COLLECTION, setMechanics));
+        unsubscribers.push(subscribeToCollection<Vehicle>(VEHICLES_COLLECTION, setVehicles));
+        unsubscribers.push(subscribeToCollection<StockItem>(STOCK_COLLECTION, setStock));
+        unsubscribers.push(subscribeToCollection<StockExit>(STOCK_EXITS_COLLECTION, setStockExits));
+        unsubscribers.push(subscribeToCollection<PresenceEntry & { id: string }>(PRESENCE_COLLECTION, setPresenceEntries));
+        unsubscribers.push(subscribeToDoc<typeof settings>(SETTINGS_COLLECTION, SETTINGS_DOC_ID, (value) => {
+          if (value) setSettings((current) => ({ ...current, ...value, alertEmails: value.alertEmails ?? [], garageCapacity: value.garageCapacity || current.garageCapacity }));
+        }));
       } catch (error) {
         console.error("[firestore] initial load failed:", error);
       } finally {
@@ -487,6 +502,7 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
     })();
     return () => {
       cancelled = true;
+      unsubscribers.forEach((unsubscribe) => unsubscribe());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1053,49 +1069,225 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
       : activeNav === "Mécaniciens" ? mechanics.map((item) => ({ ...item, specialties: item.specialties.join(" | ") }))
       : activeNav === "Stocks" ? stock.map((item) => ({ ...item }))
       : activeNav === "Présences" ? presenceEntries.map((item) => ({ ...item }))
-      : orders.map((item) => ({ ...item, parts: item.parts.join(" | ") }));
+      : orders.map((item) => ({ ...item, parts: item.parts.map((p) => `${p.itemName} x${p.quantity}`).join(" | ") }));
     if (!records.length) {
       flash("Aucune donnée à exporter pour cette période.");
       return;
     }
-    const headers = Object.keys(records[0]);
-    const escape = (value: unknown) => `"${String(value ?? "").replaceAll('"', '""')}"`;
-    const content = [headers.join(";"), ...records.map((record) => headers.map((header) => escape(record[header])).join(";"))].join("\n");
-    const blob = new Blob(["\uFEFF" + content], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `mecanova-${activeNav.toLowerCase().replaceAll(" ", "-")}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-    flash("Export CSV téléchargé avec succès.");
+    exportToExcel(`socob-gestatelier-${activeNav.toLowerCase().replaceAll(" ", "-")}`, records);
+    flash("Export Excel téléchargé avec succès.");
   }
 
   function handleImport() {
     importInputRef.current?.click();
   }
 
-  function processImport(event: ChangeEvent<HTMLInputElement>) {
+  async function processImport(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const lines = String(reader.result ?? "").trim().split(/\r?\n/);
-      const importedRows = Math.max(0, lines.length - 1);
-      flash(`${importedRows} ligne(s) détectée(s) dans « ${file.name} ». Import contrôlé prêt à être validé.`);
-      event.target.value = "";
-    };
-    reader.readAsText(file, "UTF-8");
     // Keep the original file in Firebase Storage as an audit trail of imports.
     persist(uploadFileToStorage("imports", file).then(() => undefined), "processImport upload");
+
+    let rows: Array<Record<string, string>>;
+    try {
+      rows = await readExcelFile(file);
+    } catch (error) {
+      console.error("[import] failed to read file:", error);
+      flash("Impossible de lire ce fichier. Vérifiez qu'il s'agit bien d'un fichier Excel (.xlsx) ou CSV.");
+      event.target.value = "";
+      return;
+    }
+    if (!rows.length) {
+      flash(`Aucune ligne de données trouvée dans « ${file.name} ».`);
+      event.target.value = "";
+      return;
+    }
+
+    let imported = 0;
+    let skipped = 0;
+
+    if (activeNav === "Véhicules") {
+      const newVehicles: Vehicle[] = [];
+      rows.forEach((row, idx) => {
+        const brand = pickColumn(row, "brand", "Marque");
+        const model = pickColumn(row, "model", "Modèle");
+        const plate = pickColumn(row, "plate", "Immatriculation", "Plaque");
+        if (!brand || !model || !plate) { skipped += 1; return; }
+        const statusRaw = pickColumn(row, "status", "Statut");
+        const status: Vehicle["status"] = ["Opérationnel", "En réparation", "Immobilisé", "Hors service"].includes(statusRaw) ? statusRaw as Vehicle["status"] : "Opérationnel";
+        const today = new Date().toISOString().slice(0, 10);
+        newVehicles.push({
+          id: `V${String(vehicles.length + newVehicles.length + 1).padStart(3, "0")}`,
+          brand, model, plate,
+          year: parseInt(pickColumn(row, "year", "Année")) || new Date().getFullYear(),
+          mileage: parseInt(pickColumn(row, "mileage", "Kilométrage")) || 0,
+          status, statusDate: today,
+          lastRevisionKm: parseInt(pickColumn(row, "lastRevisionKm", "Dernière révision")) || 0,
+          nextRevisionKm: parseInt(pickColumn(row, "nextRevisionKm", "Prochaine révision")) || 0,
+          lastMaintenance: pickColumn(row, "lastMaintenance", "Dernier entretien") || today,
+          nextMaintenance: pickColumn(row, "nextMaintenance", "Prochain entretien") || today,
+          assignedDriver: pickColumn(row, "assignedDriver", "Chauffeur") || "Non assigné",
+          ownerName: pickColumn(row, "ownerName", "Propriétaire") || settings.workshopName,
+          ownerAddress: pickColumn(row, "ownerAddress", "Adresse propriétaire"),
+          commercialType: pickColumn(row, "commercialType", "Type commercial"),
+          typeCode: pickColumn(row, "typeCode", "Code type"),
+          bodyType: pickColumn(row, "bodyType", "Carrosserie"),
+          color: pickColumn(row, "color", "Couleur"),
+          fuel: pickColumn(row, "fuel", "Carburant") || "Diesel",
+          seats: parseInt(pickColumn(row, "seats", "Places")) || 0,
+          fiscalPower: parseInt(pickColumn(row, "fiscalPower", "Puissance fiscale")) || 0,
+          enginePower: parseInt(pickColumn(row, "enginePower", "Puissance moteur")) || 0,
+          displacement: parseInt(pickColumn(row, "displacement", "Cylindrée")) || 0,
+          grossWeight: parseInt(pickColumn(row, "grossWeight", "PTAC")) || 0,
+          curbWeight: parseInt(pickColumn(row, "curbWeight", "Poids à vide")) || 0,
+          payload: parseInt(pickColumn(row, "payload", "Charge utile")) || 0,
+          axles: parseInt(pickColumn(row, "axles", "Essieux")) || 2,
+          vin: pickColumn(row, "vin", "VIN", "Numéro de châssis"),
+          registrationDate: pickColumn(row, "registrationDate", "Date d'immatriculation") || today,
+          inspectionDate: pickColumn(row, "inspectionDate", "Date de visite technique") || today,
+        });
+        imported += 1;
+      });
+      if (newVehicles.length) {
+        setVehicles([...vehicles, ...newVehicles]);
+        persist(saveDocs(VEHICLES_COLLECTION, newVehicles), "import vehicles");
+      }
+    } else if (activeNav === "Mécaniciens") {
+      const newMechanics: Mechanic[] = [];
+      rows.forEach((row) => {
+        const name = pickColumn(row, "name", "Nom");
+        if (!name) { skipped += 1; return; }
+        const stateRaw = pickColumn(row, "state", "Statut");
+        const state: Mechanic["state"] = ["En intervention", "Disponible", "Pause", "Absent"].includes(stateRaw) ? stateRaw as Mechanic["state"] : "Disponible";
+        const specialtiesRaw = pickColumn(row, "specialties", "Spécialités");
+        newMechanics.push({
+          id: `M${String(mechanics.length + newMechanics.length + 1).padStart(3, "0")}`,
+          name,
+          role: pickColumn(row, "role", "Rôle") || "Mécanicien",
+          initials: name.split(" ").map((n) => n[0]).filter(Boolean).join("").toUpperCase().slice(0, 2) || "??",
+          color: "#b8d4c8",
+          state,
+          stateTone: state === "En intervention" ? "working" : state === "Pause" ? "pause" : state === "Absent" ? "absent" : "available",
+          email: pickColumn(row, "email", "Email"),
+          phone: pickColumn(row, "phone", "Téléphone"),
+          specialties: specialtiesRaw ? specialtiesRaw.split(/[|,]/).map((s) => s.trim()).filter(Boolean) : [],
+          startDate: pickColumn(row, "startDate", "Date d'arrivée") || new Date().toISOString().slice(0, 10),
+        });
+        imported += 1;
+      });
+      if (newMechanics.length) {
+        setMechanics([...mechanics, ...newMechanics]);
+        persist(saveDocs(MECHANICS_COLLECTION, newMechanics), "import mechanics");
+      }
+    } else if (activeNav === "Stocks") {
+      const newItems: StockItem[] = [];
+      rows.forEach((row) => {
+        const name = pickColumn(row, "name", "Désignation");
+        if (!name) { skipped += 1; return; }
+        const quantity = parseInt(pickColumn(row, "quantity", "Quantité")) || 0;
+        const minLevel = parseInt(pickColumn(row, "minLevel", "Seuil mini")) || 1;
+        const unitPrice = parseFloat(pickColumn(row, "unitPrice", "Prix unitaire")) || 0;
+        const level: StockItem["level"] = quantity <= minLevel * 0.5 ? "critique" : quantity <= minLevel ? "bas" : "normal";
+        newItems.push({
+          id: `P${String(stock.length + newItems.length + 1).padStart(3, "0")}`,
+          name,
+          ref: pickColumn(row, "ref", "Référence"),
+          category: pickColumn(row, "category", "Catégorie") || "Divers",
+          quantity, minLevel, unitPrice,
+          totalValue: quantity * unitPrice,
+          supplier: pickColumn(row, "supplier", "Fournisseur"),
+          location: pickColumn(row, "location", "Emplacement"),
+          lastEntry: new Date().toISOString().slice(0, 10),
+          level,
+          percent: Math.min((quantity / (minLevel * 2)) * 100, 100),
+        });
+        imported += 1;
+      });
+      if (newItems.length) {
+        setStock([...stock, ...newItems]);
+        persist(saveDocs(STOCK_COLLECTION, newItems), "import stock");
+      }
+    } else if (activeNav === "Présences") {
+      const newEntries: PresenceEntry[] = [];
+      rows.forEach((row) => {
+        const mechanicName = pickColumn(row, "mechanic", "Mécanicien");
+        const date = pickColumn(row, "date", "Date");
+        const mechanicMatch = mechanics.find((m) => m.name.toLowerCase() === mechanicName.toLowerCase());
+        if (!mechanicMatch || !date) { skipped += 1; return; }
+        const statusRaw = pickColumn(row, "status", "Statut");
+        const status: PresenceStatus = ["Présent", "Absent", "En pause"].includes(statusRaw) ? statusRaw as PresenceStatus : "Présent";
+        newEntries.push({
+          mechanicId: mechanicMatch.id,
+          date,
+          status,
+          arrival: pickColumn(row, "arrival", "Arrivée"),
+          departure: pickColumn(row, "departure", "Départ"),
+        });
+        imported += 1;
+      });
+      if (newEntries.length) {
+        setPresenceEntries((current) => {
+          const next = [...current];
+          newEntries.forEach((entry) => {
+            const idx = next.findIndex((e) => e.mechanicId === entry.mechanicId && e.date === entry.date);
+            if (idx >= 0) next[idx] = entry; else next.push(entry);
+          });
+          return next;
+        });
+        persist(saveDocs(PRESENCE_COLLECTION, newEntries.map((entry) => ({ ...entry, id: presenceDocId(entry) }))), "import presence");
+      }
+    } else {
+      // Ordres de réparation
+      const newOrders: Order[] = [];
+      const stockAdjustments = new Map<string, number>();
+      rows.forEach((row) => {
+        const plate = pickColumn(row, "plate", "Immatriculation", "Plaque");
+        const vehicleMatch = vehicles.find((v) => v.plate.toLowerCase() === plate.toLowerCase());
+        const issue = pickColumn(row, "issue", "Intervention");
+        if (!vehicleMatch || !issue) { skipped += 1; return; }
+        const statusRaw = pickColumn(row, "status", "Statut");
+        const status: Order["status"] = ["En cours", "À contrôler", "En attente", "Planifié", "Terminé"].includes(statusRaw) ? statusRaw as Order["status"] : "En attente";
+        const startDate = pickColumn(row, "startDate", "Date début") || new Date().toISOString().slice(0, 10);
+        const endDate = pickColumn(row, "endDate", "Date fin") || startDate;
+        const startTime = pickColumn(row, "startTime", "Heure début");
+        const endTime = status === "Terminé" ? pickColumn(row, "endTime", "Heure fin") : "";
+        const mechanicName = pickColumn(row, "mechanic", "Mécanicien") || "À affecter";
+        const mechanicMatch = mechanics.find((m) => m.name.toLowerCase() === mechanicName.toLowerCase());
+        newOrders.push({
+          id: `OR-${2048 + orders.length + newOrders.length + 1}`,
+          vehicleId: vehicleMatch.id,
+          vehicle: `${vehicleMatch.brand} ${vehicleMatch.model}`,
+          plate: vehicleMatch.plate,
+          issue,
+          mechanic: mechanicMatch ? mechanicMatch.name : mechanicName,
+          initials: mechanicMatch ? mechanicMatch.initials : "--",
+          duration: endTime ? durationLabel(minutesBetween(startTime, endTime)) : "À estimer",
+          startTime, endTime, status,
+          statusTone: toneForOrderStatus(status),
+          startDate, endDate,
+          cost: parseFloat(pickColumn(row, "cost", "Coût")) || 0,
+          parts: [],
+        });
+        imported += 1;
+      });
+      if (newOrders.length) {
+        setOrders([...newOrders, ...orders]);
+        persist(saveDocs(ORDERS_COLLECTION, newOrders), "import orders");
+        // Keep vehicle statuses (En réparation / Opérationnel) consistent with the newly imported orders.
+        const combinedOrders = [...newOrders, ...orders];
+        new Set(newOrders.map((o) => o.vehicleId)).forEach((vehicleId) => syncVehicleStatus(vehicleId, combinedOrders));
+      }
+      void stockAdjustments; // no stock impact on straight import; parts are added manually afterwards
+    }
+
+    flash(`Import terminé : ${imported} ligne(s) importée(s)${skipped ? `, ${skipped} ignorée(s) (champs requis manquants ou introuvables)` : ""}.`);
+    event.target.value = "";
   }
 
   function handleNav(label: string) {
     setActiveNav(label);
     if (label === "Paramètres") {
       setShowSettingsModal(true);
-    } else if (label !== "Vue d'ensemble") {
-      flash(`Le module « ${label} » est prêt à être consulté.`);
     }
   }
 
@@ -1425,7 +1617,7 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
               </div>
               <div className="module-actions">
                 <PeriodSelector from={mechanicPeriod.from} to={mechanicPeriod.to} onChange={(from, to) => setMechanicPeriod({ from, to })} />
-                <ActionButtons onPrint={handlePrint} onExport={handleExport} />
+                <ActionButtons onPrint={handlePrint} onExport={handleExport} onImport={handleImport} />
               </div>
             </div>
             <div className="panel full-panel">
@@ -1452,7 +1644,7 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
                 </div>
                 <div className="presence-table">
                   <div className="table-head">
-                    <span>MÉCANICIEN</span><span>ARRIVÉE</span><span>DÉPART PRÉVU</span><span>STATUT</span><span>HEURES JOUR</span><span>POINTAGE</span><span />
+                    <span>MÉCANICIEN</span><span>ARRIVÉE</span><span>DÉPART PRÉVU</span><span>STATUT</span><span>HEURES JOUR</span><span>POINTAGE</span>
                   </div>
                   {mechanics.map((mechanic) => {
                     const attendance = presenceForDay(mechanic.id, presenceDate);
@@ -1465,7 +1657,6 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
                         <span className={`status-badge ${stateToneFor(attendance.status)}`}>{attendance.status}</span>
                         <span>{durationLabel(hours)}</span>
                         <select className="attendance-select" value={attendance.status} onChange={(event) => updatePresence(mechanic.id, event.target.value as PresenceStatus)}><option>Présent</option><option>En pause</option><option>Absent</option></select>
-                        <button className="row-more" onClick={() => flash(`Pointage de ${mechanic.name} enregistré.`)} title="Enregistrer le pointage"><Icon name="save" size={16} /></button>
                       </div>
                     );
                   })}
@@ -1589,7 +1780,7 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
                         <option>En cours</option><option>À contrôler</option><option>En attente</option><option>Planifié</option><option>Terminé</option>
                       </select>
                     </label>
-                    <button className="icon-button" onClick={() => flash("La liste des ordres a été actualisée.")} aria-label="Actualiser"><Icon name="refresh" size={17} /></button>
+                    <span className="live-sync-indicator" title="Synchronisé en temps réel avec les autres appareils"><i />Temps réel</span>
                   </div>
                 </div>
                 <div className="orders-table">
@@ -1629,7 +1820,6 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
                       <div className="stock-item-top">
                         <div className="part-icon"><Icon name="box" size={16} /></div>
                         <div className="part-details"><strong>{item.name}</strong><span>{item.ref} · {item.supplier}</span></div>
-                        <button className="row-more" onClick={(e) => { e.stopPropagation(); flash(`${item.name} ajouté à la liste de commande.`); }} aria-label={`Commander ${item.name}`}><Icon name="more" size={17} /></button>
                       </div>
                       <div className="stock-progress-row">
                         <span className={`stock-level ${item.level}`}>{item.quantity} unités</span>
@@ -1645,16 +1835,6 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
                 </div>
               </article>
             </section>
-
-            <section className="insight-strip">
-              <div className="insight-icon"><Icon name="sparkle" size={20} /></div>
-              <div>
-                <p className="eyebrow">SUGGESTION SOCOB_GESTATELIER</p>
-                <h3>Gagnez jusqu'à 6h cette semaine</h3>
-                <p>En regroupant les OR-2044 et OR-2041 sur le même pont, vous réduisez les temps de changement d'outillage.</p>
-              </div>
-              <button onClick={() => flash("Optimisation de planning enregistrée.")}>Optimiser le planning <Icon name="chevronRight" size={15} /></button>
-            </section>
           </>
         );
     }
@@ -1663,7 +1843,7 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
   if (!dataReady) {
     return (
       <div className="app-shell app-shell-loading">
-        <div className="brand"><div className="brand-mark"><Icon name="wrench" size={20} strokeWidth={2.2} /></div><div><strong>socob_GestAtelier</strong><span>ATELIER INTERNE</span></div></div>
+        <div className="brand"><div className="brand-mark"><img src="/socob-logo.png" alt="Logo SOCOB" /></div><div><strong>socob_GestAtelier</strong><span>ATELIER INTERNE</span></div></div>
         <p className="loading-label">Chargement des données…</p>
       </div>
     );
@@ -1672,7 +1852,7 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand"><div className="brand-mark"><Icon name="wrench" size={20} strokeWidth={2.2} /></div><div><strong>socob_GestAtelier</strong><span>ATELIER INTERNE</span></div></div>
+        <div className="brand"><div className="brand-mark"><img src="/socob-logo.png" alt="Logo SOCOB" /></div><div><strong>socob_GestAtelier</strong><span>ATELIER INTERNE</span></div></div>
         <div className="sidebar-label">ESPACE DE TRAVAIL</div>
         <nav className="main-nav" aria-label="Navigation principale">
           {navSections.map((section) => (
@@ -1717,7 +1897,7 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
               <button className="user-button" onClick={() => setShowUserMenu(!showUserMenu)}><Avatar initials={currentUserInitials} color="#e8b18c" small /><span>{currentUser.username}</span><Icon name="chevronDown" size={15} /></button>
               {showUserMenu && (
                 <div className="popover user-popover">
-                  <button onClick={() => flash("Votre profil est à jour.")}>Mon profil</button>
+                  <button onClick={() => flash(`Connecté en tant que ${currentUser.username} — ${currentUser.role}.`)}>Mon profil</button>
                   <button onClick={() => setShowSettingsModal(true)}>Paramètres</button>
                   <button onClick={onLogout}>Se déconnecter</button>
                 </div>
@@ -1731,7 +1911,7 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
         </div>
       </main>
 
-      <input ref={importInputRef} className="visually-hidden" type="file" accept=".csv,text/csv" onChange={processImport} />
+      <input ref={importInputRef} className="visually-hidden" type="file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={processImport} />
 
       {/* Toast */}
       {notice && (

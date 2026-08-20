@@ -60,7 +60,8 @@ export default function LoginScreen() {
     <div className="auth-shell">
       <div className="auth-card">
         <div className="auth-side">
-          <div className="auth-logo">SG</div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/socob-logo.png" alt="Logo SOCOB" className="auth-logo" />
           <h1>socob_GestAtelier</h1>
           <p>Accès sécurisé à l&rsquo;application de gestion de garage automobile. Connectez-vous ou créez un compte lors de la première utilisation.</p>
           <div className="auth-hint">
