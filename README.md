@@ -55,6 +55,63 @@ RISE Presence (comportement identique à celui déjà en place pour les
 autres applications tant qu'aucune entreprise dédiée n'est assignée
 depuis le menu "Entreprises" de RISE Presence).
 
+## Identité visuelle SOCOB
+
+L'application reprend le logo et les couleurs de SOCOB :
+- Logo affiché sur l'écran de connexion, dans le menu latéral, en icône
+  d'onglet (favicon), et **en filigrane discret** en arrière-plan de
+  chaque page (`public/socob-logo.png`).
+- Palette de couleurs (variables `--navy`/`--orange` dans
+  `globals.css`) recalée sur le vert et l'or du logo.
+
+## Synchronisation temps réel (multi-utilisateurs)
+
+Toutes les données (ordres, mécaniciens, véhicules, stock, présences,
+paramètres) sont désormais **synchronisées en direct** avec Firestore
+(`onSnapshot`), et non plus chargées une seule fois à l'ouverture de la
+page. Concrètement : si un autre utilisateur modifie quelque chose sur
+un autre appareil, ça apparaît instantanément sur votre écran, sans
+recharger la page. C'est indispensable pour un usage par plusieurs
+personnes en même temps.
+
+## Audit "figé vs dynamique"
+
+Avant la mise à disposition du client final, un audit complet a été
+mené pour repérer tout élément de l'interface qui semblait interactif
+mais ne faisait en réalité rien (ou l'inverse — une valeur censée être
+dynamique mais écrite en dur). Éléments corrigés :
+- Un bouton "Enregistrer le pointage" qui n'enregistrait rien (les
+  present saisies sont déjà sauvegardées automatiquement) — supprimé.
+- Un bouton "Actualiser" qui affichait un faux message sans jamais
+  rafraîchir — remplacé par un indicateur "Temps réel" honnête.
+- Un encart de suggestion citant des ordres de réparation figés en dur
+  ("OR-2044", "OR-2041") avec un bouton non fonctionnel — supprimé.
+- Un bouton "ajouté à la liste de commande" sans fonctionnalité réelle
+  derrière — supprimé.
+- Une date figée en dur ("24 oct. 2024") sur la version mobile —
+  remplacée par la vraie date du jour.
+- Un message de profil inventé — remplacé par les vraies informations
+  du compte connecté.
+
+## Export / import Excel
+
+Chaque module (Ordres de réparation, Mécaniciens, Véhicules, Stocks,
+Présences) propose des boutons **Exporter** et **Importer** qui
+produisent/lisent de vrais fichiers **.xlsx** (via la librairie
+`xlsx`/SheetJS), pas de simples CSV :
+
+- **Exporter** télécharge un fichier `.xlsx` avec toutes les colonnes du
+  module actif.
+- **Importer** lit un fichier `.xlsx` (ou `.csv`) et crée réellement les
+  enregistrements correspondants dans Firestore — ce n'est pas une
+  prévisualisation. Les colonnes reconnues reprennent soit les noms de
+  champs internes (ceux du fichier exporté), soit des libellés français
+  courants (ex. "Marque", "Immatriculation", "Mécanicien"...). Les lignes
+  sans les champs obligatoires (ex. plaque manquante pour un véhicule)
+  sont ignorées et comptabilisées dans le message de fin d'import.
+- Le fichier importé est aussi archivé dans Firebase Storage (dossier
+  `imports/`) à titre d'audit.
+
 ## Authentification
 
 L'application démarre désormais sur un écran de connexion / création de

@@ -52,7 +52,7 @@ export default function AppGate() {
   if (!authChecked) {
     return (
       <div className="app-shell app-shell-loading">
-        <div className="brand"><div className="brand-mark" /><div><strong>socob_GestAtelier</strong><span>ATELIER INTERNE</span></div></div>
+        <div className="brand"><div className="brand-mark"><img src="/socob-logo.png" alt="Logo SOCOB" /></div><div><strong>socob_GestAtelier</strong><span>ATELIER INTERNE</span></div></div>
         <p className="loading-label">Vérification de la session…</p>
       </div>
     );

@@ -16,6 +16,7 @@ import {
   deleteDoc,
   setDoc,
   writeBatch,
+  onSnapshot,
 } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { db, storage } from "@/firebase";
@@ -32,6 +33,29 @@ export async function loadOrSeedCollection<T extends WithId>(collectionName: str
     await saveDocs(collectionName, seed);
   }
   return seed;
+}
+
+/**
+ * Live-subscribes to a collection: `callback` fires immediately with the
+ * current contents, then again every time ANY user's changes are written
+ * to Firestore (create/update/delete) — including from other devices or
+ * browser tabs. Returns an unsubscribe function to call on unmount.
+ */
+export function subscribeToCollection<T extends WithId>(collectionName: string, callback: (items: T[]) => void): () => void {
+  return onSnapshot(
+    collection(db, collectionName),
+    (snapshot) => callback(snapshot.docs.map((docSnap) => docSnap.data() as T)),
+    (error) => console.error(`[firestore] live sync for "${collectionName}" failed:`, error)
+  );
+}
+
+/** Live-subscribes to a single "singleton" document (e.g. app settings). */
+export function subscribeToDoc<T>(collectionName: string, id: string, callback: (value: T | null) => void): () => void {
+  return onSnapshot(
+    doc(db, collectionName, id),
+    (snap) => callback(snap.exists() ? (snap.data() as T) : null),
+    (error) => console.error(`[firestore] live sync for "${collectionName}/${id}" failed:`, error)
+  );
 }
 
 /** Load a single "singleton" document (e.g. app settings), seeding it if missing. */
