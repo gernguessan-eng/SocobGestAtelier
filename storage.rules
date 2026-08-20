@@ -1,0 +1,11 @@
+rules_version = '2';
+
+// Baseline rules for files/images/documents (CSV imports, attachments, etc.)
+// uploaded from the workshop management app.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
