@@ -379,7 +379,7 @@ import type { UserProfile } from "@/lib/auth-service";
 
 type DashboardShellProps = {
   currentUser: UserProfile;
-  onLogout: () => void;
+  onLogout: () => Promise<void>;
 };
 
 function initialsFromName(name: string): string {
@@ -406,6 +406,7 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
   const [showStockExitForm, setShowStockExitForm] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [notice, setNotice] = useState("");
   const [stockFilter, setStockFilter] = useState(false);
   const [stockSearch, setStockSearch] = useState("");
@@ -1897,9 +1898,19 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
               <button className="user-button" onClick={() => setShowUserMenu(!showUserMenu)}><Avatar initials={currentUserInitials} color="#e8b18c" small /><span>{currentUser.username}</span><Icon name="chevronDown" size={15} /></button>
               {showUserMenu && (
                 <div className="popover user-popover">
-                  <button onClick={() => flash(`Connecté en tant que ${currentUser.username} — ${currentUser.role}.`)}>Mon profil</button>
-                  <button onClick={() => setShowSettingsModal(true)}>Paramètres</button>
-                  <button onClick={onLogout}>Se déconnecter</button>
+                  <button onClick={() => { setShowUserMenu(false); flash(`Connecté en tant que ${currentUser.username} — ${currentUser.role}.`); }}>Mon profil</button>
+                  <button onClick={() => { setShowUserMenu(false); setShowSettingsModal(true); }}>Paramètres</button>
+                  <button disabled={loggingOut} onClick={async () => {
+                    setShowUserMenu(false);
+                    setLoggingOut(true);
+                    try {
+                      await onLogout();
+                    } catch (error) {
+                      console.error("[logout] failed:", error);
+                      flash("La déconnexion a échoué. Vérifiez votre connexion et réessayez.");
+                      setLoggingOut(false);
+                    }
+                  }}>{loggingOut ? "Déconnexion…" : "Se déconnecter"}</button>
                 </div>
               )}
             </div>
