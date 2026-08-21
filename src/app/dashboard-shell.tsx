@@ -1930,7 +1930,7 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
           </div>
         </header>
 
-        <div className="page-content">
+        <div className={`page-content ${(showNotifications || showUserMenu) ? "page-content-pushed" : ""}`}>
           {renderContent()}
         </div>
       </main>
