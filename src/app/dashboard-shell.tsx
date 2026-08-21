@@ -717,6 +717,19 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
     setModalDirty(false);
   }, [showOrderForm, showMechanicForm, showVehicleForm, showStockForm, showStockExitForm, showSettingsModal, selectedOrder, selectedMechanic, selectedVehicle, selectedStockItem, quickExitItem]);
 
+  useEffect(() => {
+    if (!showNotifications && !showUserMenu) return;
+    function handleOutsideClick(event: MouseEvent) {
+      const target = event.target as HTMLElement;
+      if (!target.closest(".notification-wrap") && !target.closest(".user-wrap")) {
+        setShowNotifications(false);
+        setShowUserMenu(false);
+      }
+    }
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, [showNotifications, showUserMenu]);
+
   function flash(message: string) {
     setNotice(message);
     window.setTimeout(() => setNotice(""), 3200);
@@ -1882,7 +1895,7 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
           <div className="topbar-actions">
             <div className="date-chip"><Icon name="calendar" size={16} /><span>{todayLabelCapitalized}</span></div>
             <div className="notification-wrap">
-              <button className="top-icon-button" onClick={() => setShowNotifications(!showNotifications)} aria-label="Notifications"><Icon name="bell" size={19} />{notifications.length > 0 && <span className="notification-dot" />}</button>
+              <button className="top-icon-button" onClick={() => { setShowNotifications(!showNotifications); setShowUserMenu(false); }} aria-label="Notifications"><Icon name="bell" size={19} />{notifications.length > 0 && <span className="notification-dot" />}</button>
               {showNotifications && (
                 <div className="popover notification-popover">
                   <div className="popover-title"><strong>Notifications</strong><span>{notifications.length} nouvelle{notifications.length > 1 ? "s" : ""}</span></div>
@@ -1895,7 +1908,7 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
               )}
             </div>
             <div className="user-wrap">
-              <button className="user-button" onClick={() => setShowUserMenu(!showUserMenu)}><Avatar initials={currentUserInitials} color="#e8b18c" small /><span>{currentUser.username}</span><Icon name="chevronDown" size={15} /></button>
+              <button className="user-button" onClick={() => { setShowUserMenu(!showUserMenu); setShowNotifications(false); }}><Avatar initials={currentUserInitials} color="#e8b18c" small /><span>{currentUser.username}</span><Icon name="chevronDown" size={15} /></button>
               {showUserMenu && (
                 <div className="popover user-popover">
                   <button onClick={() => { setShowUserMenu(false); flash(`Connecté en tant que ${currentUser.username} — ${currentUser.role}.`); }}>Mon profil</button>
