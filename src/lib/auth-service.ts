@@ -24,6 +24,7 @@ export type UserProfile = {
   username: string;
   role: string;
   email: string | null;
+  photoURL: string | null;
 };
 
 const AUTH_DOMAIN = "socob-gestatelier.local";
@@ -43,6 +44,7 @@ export async function signUp(username: string, password: string, role: string, e
     username: username.trim(),
     role: role.trim() || "Utilisateur",
     email: email?.trim() || null,
+    photoURL: null,
   };
   await setDoc(doc(db, USERS_COLLECTION, credential.user.uid), {
     ...profile,
@@ -69,6 +71,7 @@ export async function fetchUserProfile(user: User): Promise<UserProfile> {
       username: data.username ?? user.displayName ?? "Utilisateur",
       role: data.role ?? "Utilisateur",
       email: data.email ?? null,
+      photoURL: data.photoURL ?? null,
     };
   }
   return {
@@ -76,7 +79,13 @@ export async function fetchUserProfile(user: User): Promise<UserProfile> {
     username: user.displayName ?? "Utilisateur",
     role: "Utilisateur",
     email: null,
+    photoURL: null,
   };
+}
+
+/** Updates the signed-in person's own profile fields (name, role, email, photo). */
+export async function updateUserProfile(uid: string, updates: Partial<Pick<UserProfile, "username" | "role" | "email" | "photoURL">>): Promise<void> {
+  await setDoc(doc(db, USERS_COLLECTION, uid), updates, { merge: true });
 }
 
 export function subscribeToAuth(callback: (user: User | null) => void): () => void {

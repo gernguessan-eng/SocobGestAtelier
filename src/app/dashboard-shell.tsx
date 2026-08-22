@@ -331,7 +331,11 @@ const navSections: Array<{ label: string; items: Array<{ label: string; icon: Ic
   { label: "RESSOURCES", items: [{ label: "Mécaniciens", icon: "users" }, { label: "Stocks", icon: "box", badge: "stock" }, { label: "Présences", icon: "clock" }] },
 ];
 
-function Avatar({ initials, color, small = false }: { initials: string; color?: string; small?: boolean }) {
+function Avatar({ initials, color, small = false, photoURL }: { initials: string; color?: string; small?: boolean; photoURL?: string | null }) {
+  if (photoURL) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={photoURL} alt="" className={`avatar avatar-photo ${small ? "avatar-small" : ""}`} />;
+  }
   return <span className={`avatar ${small ? "avatar-small" : ""}`} style={{ background: color ?? "#dce6ef" }}>{initials}</span>;
 }
 
@@ -368,14 +372,14 @@ function PeriodSelector({ from, to, onChange }: { from: string; to: string; onCh
 function ActionButtons({ onPrint, onExport, onImport }: { onPrint?: () => void; onExport?: () => void; onImport?: () => void }) {
   return (
     <div className="action-buttons">
-      {onPrint && <button className="icon-action-btn" onClick={onPrint} title="Imprimer"><Icon name="printer" size={18} /></button>}
-      {onExport && <button className="icon-action-btn" onClick={onExport} title="Exporter"><Icon name="download" size={18} /></button>}
-      {onImport && <button className="icon-action-btn" onClick={onImport} title="Importer"><Icon name="upload" size={18} /></button>}
+      {onPrint && <button className="icon-action-btn labeled" onClick={onPrint} title="Imprimer"><Icon name="printer" size={16} /><span>Imprimer</span></button>}
+      {onExport && <button className="icon-action-btn labeled" onClick={onExport} title="Exporter en Excel (.xlsx)"><Icon name="download" size={16} /><span>Exporter</span></button>}
+      {onImport && <button className="icon-action-btn labeled" onClick={onImport} title="Importer un fichier Excel (.xlsx)"><Icon name="upload" size={16} /><span>Importer</span></button>}
     </div>
   );
 }
 
-import type { UserProfile } from "@/lib/auth-service";
+import { updateUserProfile, type UserProfile } from "@/lib/auth-service";
 
 type DashboardShellProps = {
   currentUser: UserProfile;
@@ -390,8 +394,9 @@ function initialsFromName(name: string): string {
 }
 
 export default function DashboardShell({ currentUser, onLogout }: DashboardShellProps) {
-  const currentUserInitials = initialsFromName(currentUser.username);
-  const currentUserFirstName = currentUser.username.trim().split(/\s+/)[0] || currentUser.username;
+  const profile = currentUser;
+  const currentUserInitials = initialsFromName(profile.username);
+  const currentUserFirstName = profile.username.trim().split(/\s+/)[0] || profile.username;
   const [activeNav, setActiveNav] = useState("Vue d'ensemble");
   const [orders, setOrders] = useState<Order[]>([]);
   const [mechanics, setMechanics] = useState<Mechanic[]>([]);
@@ -406,6 +411,9 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
   const [showStockExitForm, setShowStockExitForm] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [dismissedNotifications, setDismissedNotifications] = useState<Set<string>>(new Set());
   const [loggingOut, setLoggingOut] = useState(false);
   const [notice, setNotice] = useState("");
   const [stockFilter, setStockFilter] = useState(false);
@@ -447,11 +455,13 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
     currency: "FCFA",
     language: "FR",
     alertEmails: [] as string[],
-    garageCapacity: 10
+    garageCapacity: 10,
+    moduleOrder: {} as Record<string, string[]>
   });
   const [alertEmailDraft, setAlertEmailDraft] = useState("");
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [dataReady, setDataReady] = useState(false);
+  const [reorderMode, setReorderMode] = useState(false);
 
   // Initial load from Firestore (seeds the demo dataset the first time the
   // Firestore project is empty, then reads from it on every subsequent load).
@@ -493,7 +503,7 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
         unsubscribers.push(subscribeToCollection<StockExit>(STOCK_EXITS_COLLECTION, setStockExits));
         unsubscribers.push(subscribeToCollection<PresenceEntry & { id: string }>(PRESENCE_COLLECTION, setPresenceEntries));
         unsubscribers.push(subscribeToDoc<typeof settings>(SETTINGS_COLLECTION, SETTINGS_DOC_ID, (value) => {
-          if (value) setSettings((current) => ({ ...current, ...value, alertEmails: value.alertEmails ?? [], garageCapacity: value.garageCapacity || current.garageCapacity }));
+          if (value) setSettings((current) => ({ ...current, ...value, alertEmails: value.alertEmails ?? [], garageCapacity: value.garageCapacity || current.garageCapacity, moduleOrder: value.moduleOrder ?? {} }));
         }));
       } catch (error) {
         console.error("[firestore] initial load failed:", error);
@@ -517,11 +527,38 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
     const entry = presenceEntries.find((item) => item.mechanicId === mechanic.id && item.date === todayIso);
     return !entry || !entry.arrival;
   });
-  const notifications = [
-    ...criticalStockAlerts.slice(0, 3).map((item) => ({ id: `stock-${item.id}`, tone: "red" as const, icon: "alert" as const, title: "Stock critique", text: `${item.name} : ${item.quantity} unité(s) restante(s).` })),
-    ...missingCheckIns.slice(0, 3).map((mechanic) => ({ id: `presence-${mechanic.id}`, tone: "blue" as const, icon: "clock" as const, title: "Pointage manquant", text: `Le pointage de ${mechanic.name} est attendu.` })),
+  const allNotifications = [
+    ...criticalStockAlerts.slice(0, 3).map((item) => ({ id: `stock-${item.id}`, tone: "red" as const, icon: "alert" as const, title: "Stock critique", text: `${item.name} : ${item.quantity} unité(s) restante(s).`, target: "Stocks" })),
+    ...missingCheckIns.slice(0, 3).map((mechanic) => ({ id: `presence-${mechanic.id}`, tone: "blue" as const, icon: "clock" as const, title: "Pointage manquant", text: `Le pointage de ${mechanic.name} est attendu.`, target: "Présences" })),
   ];
+  const notifications = allNotifications.filter((item) => !dismissedNotifications.has(item.id));
   const orderInPeriod = (item: Order, range: { from: string; to: string }) => isInPeriod(item.startDate, range.from, range.to);
+  const orderedNavSections = useMemo(() => navSections.map((section) => {
+    const customOrder = settings.moduleOrder[section.label];
+    if (!customOrder || !customOrder.length) return section;
+    const itemsByLabel = new Map(section.items.map((item) => [item.label, item]));
+    const ordered = customOrder.map((label) => itemsByLabel.get(label)).filter((item): item is (typeof section.items)[number] => Boolean(item));
+    const missing = section.items.filter((item) => !customOrder.includes(item.label));
+    return { ...section, items: [...ordered, ...missing] };
+  }), [settings.moduleOrder]);
+
+  function moveModule(sectionLabel: string, itemLabel: string, direction: -1 | 1) {
+    const section = orderedNavSections.find((s) => s.label === sectionLabel);
+    if (!section) return;
+    const labels = section.items.map((i) => i.label);
+    const idx = labels.indexOf(itemLabel);
+    const swapWith = idx + direction;
+    if (swapWith < 0 || swapWith >= labels.length) return;
+    [labels[idx], labels[swapWith]] = [labels[swapWith], labels[idx]];
+    setSettings((current) => ({ ...current, moduleOrder: { ...current.moduleOrder, [sectionLabel]: labels } }));
+  }
+
+  function saveModuleOrder() {
+    persist(saveSingletonDoc(SETTINGS_COLLECTION, SETTINGS_DOC_ID, settings), "saveModuleOrder");
+    setReorderMode(false);
+    flash("Disposition du menu enregistrée.");
+  }
+
   const orderList = orders
     .filter((item) => orderInPeriod(item, orderPeriod))
     .filter((item) => {
@@ -715,7 +752,7 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
   // Whenever a modal opens (or closes), it starts from a clean slate.
   useEffect(() => {
     setModalDirty(false);
-  }, [showOrderForm, showMechanicForm, showVehicleForm, showStockForm, showStockExitForm, showSettingsModal, selectedOrder, selectedMechanic, selectedVehicle, selectedStockItem, quickExitItem]);
+  }, [showOrderForm, showMechanicForm, showVehicleForm, showStockForm, showStockExitForm, showSettingsModal, showProfileModal, selectedOrder, selectedMechanic, selectedVehicle, selectedStockItem, quickExitItem]);
 
   useEffect(() => {
     if (!showNotifications && !showUserMenu) return;
@@ -1033,13 +1070,13 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const nextSettings = {
+      ...settings,
       workshopName: String(form.get("workshopName")),
       emailNotifications: form.get("emailNotifications") === "on",
       autoAssign: form.get("autoAssign") === "on",
       alertThreshold: parseInt(String(form.get("alertThreshold"))),
       currency: String(form.get("currency")),
       language: String(form.get("language")),
-      alertEmails: settings.alertEmails,
       garageCapacity: Math.max(1, parseInt(String(form.get("garageCapacity"))) || settings.garageCapacity)
     };
     setSettings(nextSettings);
@@ -1047,6 +1084,43 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
     setShowSettingsModal(false);
     setModalDirty(false);
     flash("Les paramètres ont été enregistrés avec succès.");
+  }
+
+  function handleSaveProfile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const updates = {
+      username: String(form.get("username") || profile.username).trim() || profile.username,
+      role: String(form.get("role") || profile.role).trim() || profile.role,
+      email: (String(form.get("email") || "").trim() || null),
+    };
+    persist(updateUserProfile(profile.uid, updates), "handleSaveProfile");
+    setShowProfileModal(false);
+    setModalDirty(false);
+    flash("Votre profil a été mis à jour.");
+  }
+
+  async function handleProfilePhotoChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      flash("Merci de choisir une image (JPG, PNG…).");
+      event.target.value = "";
+      return;
+    }
+    setUploadingPhoto(true);
+    try {
+      const url = await uploadFileToStorage(`avatars/${profile.uid}`, file);
+      await updateUserProfile(profile.uid, { photoURL: url });
+      setModalDirty(true);
+      flash("Photo de profil mise à jour.");
+    } catch (error) {
+      console.error("[profile] photo upload failed:", error);
+      flash("Le téléversement de la photo a échoué. Réessayez.");
+    } finally {
+      setUploadingPhoto(false);
+      event.target.value = "";
+    }
   }
 
   function addAlertEmail() {
@@ -1867,23 +1941,42 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand"><div className="brand-mark"><img src="/socob-logo.png" alt="Logo SOCOB" /></div><div><strong>socob_GestAtelier</strong><span>ATELIER INTERNE</span></div></div>
-        <div className="sidebar-label">ESPACE DE TRAVAIL</div>
+        <div className="sidebar-label-row">
+          <div className="sidebar-label">ESPACE DE TRAVAIL</div>
+          {!reorderMode ? (
+            <button className="reorder-toggle" onClick={() => setReorderMode(true)} title="Réorganiser les onglets"><Icon name="edit" size={13} /> Réorganiser</button>
+          ) : (
+            <button className="reorder-toggle validate" onClick={saveModuleOrder} title="Valider la nouvelle disposition"><Icon name="check" size={13} /> Valider</button>
+          )}
+        </div>
         <nav className="main-nav" aria-label="Navigation principale">
-          {navSections.map((section) => (
-            <div className="nav-section" key={section.label}>
-              <p className="nav-section-label">{section.label}</p>
-              {section.items.map((item) => (
-                <button className={`nav-item ${activeNav === item.label ? "active" : ""}`} onClick={() => handleNav(item.label)} key={item.label}>
-                  <Icon name={item.icon} size={18} /><span>{item.label}</span>{item.badge === "orders" && <em>{orders.length}</em>}{item.badge === "stock" && <em className="warning-count">{stock.filter((s) => s.level === "critique" || s.level === "bas").length}</em>}
-                </button>
-              ))}
-            </div>
-          ))}
+          {orderedNavSections.map((section) => {
+            const reorderable = reorderMode && section.items.length > 1;
+            return (
+              <div className="nav-section" key={section.label}>
+                <p className="nav-section-label">{section.label}</p>
+                {section.items.map((item, idx) => (
+                  reorderable ? (
+                    <div className="nav-item nav-item-reorder" key={item.label}>
+                      <Icon name={item.icon} size={18} /><span>{item.label}</span>
+                      <div className="nav-reorder-arrows">
+                        <button type="button" disabled={idx === 0} onClick={() => moveModule(section.label, item.label, -1)} aria-label={`Monter ${item.label}`}><Icon name="arrowUp" size={14} /></button>
+                        <button type="button" disabled={idx === section.items.length - 1} onClick={() => moveModule(section.label, item.label, 1)} aria-label={`Descendre ${item.label}`}><Icon name="arrowDown" size={14} /></button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button className={`nav-item ${activeNav === item.label ? "active" : ""}`} onClick={() => handleNav(item.label)} key={item.label}>
+                      <Icon name={item.icon} size={18} /><span>{item.label}</span>{item.badge === "orders" && <em>{orders.length}</em>}{item.badge === "stock" && <em className="warning-count">{stock.filter((s) => s.level === "critique" || s.level === "bas").length}</em>}
+                    </button>
+                  )
+                ))}
+              </div>
+            );
+          })}
         </nav>
         <div className="sidebar-bottom">
           <button className={`nav-item ${activeNav === "Paramètres" ? "active" : ""}`} onClick={() => handleNav("Paramètres")}><Icon name="settings" size={18} /><span>Paramètres</span></button>
-          <button className="nav-item" onClick={() => flash("Centre d'aide : consultez les guides de prise en main.")}><Icon name="help" size={18} /><span>Centre d'aide</span></button>
-          <div className="sidebar-profile"><Avatar initials={currentUserInitials} color="#e8b18c" /><div><strong>{currentUser.username}</strong><span>{currentUser.role}</span></div><Icon name="more" size={18} /></div>
+          <div className="sidebar-profile clickable" onClick={() => setShowProfileModal(true)}><Avatar initials={currentUserInitials} color="#e8b18c" photoURL={profile.photoURL} /><div><strong>{profile.username}</strong><span>{profile.role}</span></div><Icon name="more" size={18} /></div>
         </div>
       </aside>
 
@@ -1901,17 +1994,28 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
                   <div className="popover-title"><strong>Notifications</strong><span>{notifications.length} nouvelle{notifications.length > 1 ? "s" : ""}</span></div>
                   {notifications.length === 0 && <div className="notification-item"><div><p>Aucune notification pour le moment.</p></div></div>}
                   {notifications.map((item) => (
-                    <div className="notification-item" key={item.id}><span className={`notification-icon ${item.tone}`}><Icon name={item.icon} size={15} /></span><div><strong>{item.title}</strong><p>{item.text}</p></div></div>
+                    <div
+                      className="notification-item notification-item-clickable"
+                      key={item.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => { setShowNotifications(false); handleNav(item.target); }}
+                      onKeyDown={(e) => { if (e.key === "Enter") { setShowNotifications(false); handleNav(item.target); } }}
+                    >
+                      <span className={`notification-icon ${item.tone}`}><Icon name={item.icon} size={15} /></span>
+                      <div><strong>{item.title}</strong><p>{item.text}</p></div>
+                      <button type="button" className="notification-dismiss" title="Marquer comme lu" onClick={(e) => { e.stopPropagation(); setDismissedNotifications((current) => new Set(current).add(item.id)); }}><Icon name="x" size={13} /></button>
+                    </div>
                   ))}
-                  <button className="popover-link" onClick={() => { setShowNotifications(false); flash("Toutes les notifications ont été marquées comme lues."); }}>Tout marquer comme lu</button>
+                  <button className="popover-link" onClick={() => { setShowNotifications(false); setDismissedNotifications((current) => { const next = new Set(current); allNotifications.forEach((item) => next.add(item.id)); return next; }); flash("Toutes les notifications ont été marquées comme lues."); }}>Tout marquer comme lu</button>
                 </div>
               )}
             </div>
             <div className="user-wrap">
-              <button className="user-button" onClick={() => { setShowUserMenu(!showUserMenu); setShowNotifications(false); }}><Avatar initials={currentUserInitials} color="#e8b18c" small /><span>{currentUser.username}</span><Icon name="chevronDown" size={15} /></button>
+              <button className="user-button" onClick={() => { setShowUserMenu(!showUserMenu); setShowNotifications(false); }}><Avatar initials={currentUserInitials} color="#e8b18c" photoURL={profile.photoURL} small /><span>{profile.username}</span><Icon name="chevronDown" size={15} /></button>
               {showUserMenu && (
                 <div className="popover user-popover">
-                  <button onClick={() => { setShowUserMenu(false); flash(`Connecté en tant que ${currentUser.username} — ${currentUser.role}.`); }}>Mon profil</button>
+                  <button onClick={() => { setShowUserMenu(false); setShowProfileModal(true); }}>Mon profil</button>
                   <button onClick={() => { setShowUserMenu(false); setShowSettingsModal(true); }}>Paramètres</button>
                   <button disabled={loggingOut} onClick={async () => {
                     setShowUserMenu(false);
@@ -2132,6 +2236,38 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
         </div>
       )}
 
+      {showProfileModal && (
+        <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) confirmedClose(() => setShowProfileModal(false)); }}>
+          <div className="modal profile-modal">
+            <div className="modal-header">
+              <div><p className="eyebrow">COMPTE</p><h2>Mon profil</h2></div>
+              <button className="icon-button" onClick={() => confirmedClose(() => setShowProfileModal(false))}><Icon name="x" size={19} /></button>
+            </div>
+            <form onSubmit={handleSaveProfile} onChange={() => setModalDirty(true)}>
+              <div className="profile-photo-row">
+                <Avatar initials={currentUserInitials} color="#e8b18c" photoURL={profile.photoURL} />
+                <div>
+                  <label className="outline-button profile-photo-upload">
+                    {uploadingPhoto ? "Téléversement…" : "Changer la photo"}
+                    <input type="file" accept="image/*" className="visually-hidden" disabled={uploadingPhoto} onChange={handleProfilePhotoChange} />
+                  </label>
+                  <span className="profile-photo-hint">JPG ou PNG, quelques Mo maximum.</span>
+                </div>
+              </div>
+              <div className="settings-section">
+                <label>Nom affiché<input name="username" defaultValue={profile.username} required /></label>
+                <label>Fonction<input name="role" defaultValue={profile.role} required /></label>
+                <label>Email (optionnel)<input name="email" type="email" defaultValue={profile.email ?? ""} placeholder="vous@exemple.com" /></label>
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="outline-button" onClick={() => confirmedClose(() => setShowProfileModal(false))}>Annuler</button>
+                <button type="submit" className="primary-button">Enregistrer <Icon name="save" size={15} /></button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Detail Modals */}
       {selectedOrder && (
         <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) confirmedClose(() => setSelectedOrder(null)); }}>
@@ -2151,6 +2287,10 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
               const startTime = String(form.get("startTime") || "");
               const status = String(form.get("status")) as Order["status"];
               const endTime = status === "Terminé" ? String(form.get("endTime") || "") : "";
+              const partsCost = selectedOrder.parts.reduce((sum, part) => {
+                const stockItem = stock.find((s) => s.id === part.itemId);
+                return sum + (stockItem?.unitPrice ?? 0) * part.quantity;
+              }, 0);
               handleUpdateOrder({ 
                 ...selectedOrder,
                 vehicleId,
@@ -2165,7 +2305,7 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
                 duration: endTime ? durationLabel(minutesBetween(startTime, endTime)) : "À estimer",
                 status,
                 statusTone: toneForOrderStatus(status),
-                cost: parseFloat(String(form.get("cost"))) 
+                cost: partsCost
               }); 
             }}>
               <div className="detail-grid">
@@ -2181,7 +2321,7 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
                   </select>
                 </label>
                 <label>Intervention<input name="issue" defaultValue={selectedOrder.issue} required /></label>
-                <label>Coût (FCFA)<input name="cost" type="number" step="1" defaultValue={selectedOrder.cost} /></label>
+                <label>Coût (FCFA)<input type="text" readOnly disabled value={formatFCFA(selectedOrder.parts.reduce((sum, part) => { const stockItem = stock.find((s) => s.id === part.itemId); return sum + (stockItem?.unitPrice ?? 0) * part.quantity; }, 0))} title="Calculé automatiquement à partir des pièces prélevées ci-dessous" /></label>
                 <label>Période du<input name="startDate" type="date" defaultValue={selectedOrder.startDate} required /></label>
                 <label>Période au<input name="endDate" type="date" defaultValue={selectedOrder.endDate} required /></label>
                 <label>Heure de début<input name="startTime" type="time" defaultValue={selectedOrder.startTime} /></label>
