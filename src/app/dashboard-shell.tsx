@@ -50,7 +50,8 @@ type IconName =
   | "save"
   | "trash"
   | "close"
-  | "calendarRange";
+  | "calendarRange"
+  | "logout";
 
 function Icon({ name, size = 18, strokeWidth = 1.8 }: { name: IconName; size?: number; strokeWidth?: number }) {
   const common = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true };
@@ -109,6 +110,8 @@ function Icon({ name, size = 18, strokeWidth = 1.8 }: { name: IconName; size?: n
     case "x":
     case "close":
       return <svg {...common}><path d="m6 6 12 12M18 6 6 18" /></svg>;
+    case "logout":
+      return <svg {...common}><path d="M15 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9" /><path d="M10 12h11m0 0-3.5-3.5M21 12l-3.5 3.5" /></svg>;
     case "sparkle":
       return <svg {...common}><path d="m12 3 1.2 5.8L19 11l-5.8 1.2L12 18l-1.2-5.8L5 11l5.8-2.2L12 3ZM19 16l.5 2.5L22 19l-2.5.5L19 22l-.5-2.5L16 19l2.5-.5L19 16Z" /></svg>;
     case "refresh":
@@ -410,7 +413,6 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
   const [showStockForm, setShowStockForm] = useState(false);
   const [showStockExitForm, setShowStockExitForm] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
-  const [showUserMenu, setShowUserMenu] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [dismissedNotifications, setDismissedNotifications] = useState<Set<string>>(new Set());
@@ -755,17 +757,16 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
   }, [showOrderForm, showMechanicForm, showVehicleForm, showStockForm, showStockExitForm, showSettingsModal, showProfileModal, selectedOrder, selectedMechanic, selectedVehicle, selectedStockItem, quickExitItem]);
 
   useEffect(() => {
-    if (!showNotifications && !showUserMenu) return;
+    if (!showNotifications) return;
     function handleOutsideClick(event: MouseEvent) {
       const target = event.target as HTMLElement;
-      if (!target.closest(".notification-wrap") && !target.closest(".user-wrap")) {
+      if (!target.closest(".notification-wrap")) {
         setShowNotifications(false);
-        setShowUserMenu(false);
       }
     }
     document.addEventListener("mousedown", handleOutsideClick);
     return () => document.removeEventListener("mousedown", handleOutsideClick);
-  }, [showNotifications, showUserMenu]);
+  }, [showNotifications]);
 
   function flash(message: string) {
     setNotice(message);
@@ -1976,6 +1977,32 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
         </nav>
         <div className="sidebar-bottom">
           <button className={`nav-item ${activeNav === "Paramètres" ? "active" : ""}`} onClick={() => handleNav("Paramètres")}><Icon name="settings" size={18} /><span>Paramètres</span></button>
+          <div className="notification-wrap sidebar-notification-wrap">
+            <button className={`nav-item ${showNotifications ? "active" : ""}`} onClick={() => setShowNotifications(!showNotifications)} aria-label="Notifications">
+              <Icon name="bell" size={18} /><span>Notifications</span>{notifications.length > 0 && <span className="notification-dot" />}
+            </button>
+            {showNotifications && (
+              <div className="popover notification-popover sidebar-notification-popover">
+                <div className="popover-title"><strong>Notifications</strong><span>{notifications.length} nouvelle{notifications.length > 1 ? "s" : ""}</span></div>
+                {notifications.length === 0 && <div className="notification-item"><div><p>Aucune notification pour le moment.</p></div></div>}
+                {notifications.map((item) => (
+                  <div
+                    className="notification-item notification-item-clickable"
+                    key={item.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => { setShowNotifications(false); handleNav(item.target); }}
+                    onKeyDown={(e) => { if (e.key === "Enter") { setShowNotifications(false); handleNav(item.target); } }}
+                  >
+                    <span className={`notification-icon ${item.tone}`}><Icon name={item.icon} size={15} /></span>
+                    <div><strong>{item.title}</strong><p>{item.text}</p></div>
+                    <button type="button" className="notification-dismiss" title="Supprimer" onClick={(e) => { e.stopPropagation(); setDismissedNotifications((current) => new Set(current).add(item.id)); }}><Icon name="x" size={13} /></button>
+                  </div>
+                ))}
+                <button className="popover-link" onClick={() => { setShowNotifications(false); setDismissedNotifications((current) => { const next = new Set(current); allNotifications.forEach((item) => next.add(item.id)); return next; }); flash("Toutes les notifications ont été marquées comme lues."); }}>Tout marquer comme lu</button>
+              </div>
+            )}
+          </div>
           <div className="sidebar-profile clickable" onClick={() => setShowProfileModal(true)}><Avatar initials={currentUserInitials} color="#e8b18c" photoURL={profile.photoURL} /><div><strong>{profile.username}</strong><span>{profile.role}</span></div><Icon name="more" size={18} /></div>
         </div>
       </aside>
@@ -1987,54 +2014,28 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
           </div>
           <div className="topbar-actions">
             <div className="date-chip"><Icon name="calendar" size={16} /><span>{todayLabelCapitalized}</span></div>
-            <div className="notification-wrap">
-              <button className="top-icon-button" onClick={() => { setShowNotifications(!showNotifications); setShowUserMenu(false); }} aria-label="Notifications"><Icon name="bell" size={19} />{notifications.length > 0 && <span className="notification-dot" />}</button>
-              {showNotifications && (
-                <div className="popover notification-popover">
-                  <div className="popover-title"><strong>Notifications</strong><span>{notifications.length} nouvelle{notifications.length > 1 ? "s" : ""}</span></div>
-                  {notifications.length === 0 && <div className="notification-item"><div><p>Aucune notification pour le moment.</p></div></div>}
-                  {notifications.map((item) => (
-                    <div
-                      className="notification-item notification-item-clickable"
-                      key={item.id}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => { setShowNotifications(false); handleNav(item.target); }}
-                      onKeyDown={(e) => { if (e.key === "Enter") { setShowNotifications(false); handleNav(item.target); } }}
-                    >
-                      <span className={`notification-icon ${item.tone}`}><Icon name={item.icon} size={15} /></span>
-                      <div><strong>{item.title}</strong><p>{item.text}</p></div>
-                      <button type="button" className="notification-dismiss" title="Marquer comme lu" onClick={(e) => { e.stopPropagation(); setDismissedNotifications((current) => new Set(current).add(item.id)); }}><Icon name="x" size={13} /></button>
-                    </div>
-                  ))}
-                  <button className="popover-link" onClick={() => { setShowNotifications(false); setDismissedNotifications((current) => { const next = new Set(current); allNotifications.forEach((item) => next.add(item.id)); return next; }); flash("Toutes les notifications ont été marquées comme lues."); }}>Tout marquer comme lu</button>
-                </div>
-              )}
-            </div>
-            <div className="user-wrap">
-              <button className="user-button" onClick={() => { setShowUserMenu(!showUserMenu); setShowNotifications(false); }}><Avatar initials={currentUserInitials} color="#e8b18c" photoURL={profile.photoURL} small /><span>{profile.username}</span><Icon name="chevronDown" size={15} /></button>
-              {showUserMenu && (
-                <div className="popover user-popover">
-                  <button onClick={() => { setShowUserMenu(false); setShowProfileModal(true); }}>Mon profil</button>
-                  <button onClick={() => { setShowUserMenu(false); setShowSettingsModal(true); }}>Paramètres</button>
-                  <button disabled={loggingOut} onClick={async () => {
-                    setShowUserMenu(false);
-                    setLoggingOut(true);
-                    try {
-                      await onLogout();
-                    } catch (error) {
-                      console.error("[logout] failed:", error);
-                      flash("La déconnexion a échoué. Vérifiez votre connexion et réessayez.");
-                      setLoggingOut(false);
-                    }
-                  }}>{loggingOut ? "Déconnexion…" : "Se déconnecter"}</button>
-                </div>
-              )}
-            </div>
+            <button
+              className="top-icon-button logout-button"
+              title="Se déconnecter"
+              aria-label="Se déconnecter"
+              disabled={loggingOut}
+              onClick={async () => {
+                setLoggingOut(true);
+                try {
+                  await onLogout();
+                } catch (error) {
+                  console.error("[logout] failed:", error);
+                  flash("La déconnexion a échoué. Vérifiez votre connexion et réessayez.");
+                  setLoggingOut(false);
+                }
+              }}
+            >
+              <Icon name="logout" size={19} />
+            </button>
           </div>
         </header>
 
-        <div className={`page-content ${(showNotifications || showUserMenu) ? "page-content-pushed" : ""}`}>
+        <div className="page-content">
           {renderContent()}
         </div>
       </main>

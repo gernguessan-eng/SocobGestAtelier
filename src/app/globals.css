@@ -84,6 +84,9 @@ textarea { resize: vertical; }
 .date-chip svg:last-child { margin-left: 3px; color: #9aa7b2; }
 .top-icon-button, .user-button, .icon-button { border: 0; color: #80909e; background: transparent; }
 .top-icon-button { position: relative; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; }
+.logout-button { color: #7c8b98; transition: color .15s, background .15s; }
+.logout-button:hover { color: #c5634a; background: #fdecea; }
+.logout-button:disabled { opacity: .5; cursor: default; }
 .top-icon-button:hover, .user-button:hover, .icon-button:hover { color: var(--orange); background: #fff4ec; }
 .notification-dot { position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border: 1.5px solid #fff; border-radius: 50%; background: var(--orange); }
 .user-wrap, .notification-wrap { position: relative; }
@@ -91,6 +94,9 @@ textarea { resize: vertical; }
 .user-button svg { color: #98a6b0; }
 .popover { position: absolute; top: calc(100% + 12px); right: 0; min-width: 220px; padding: 13px; border: 1px solid #e4eaee; border-radius: 10px; background: #fff; box-shadow: 0 14px 35px rgba(24,43,59,.15); z-index: 30; }
 .notification-popover { width: 302px; padding: 0; }
+.sidebar-notification-wrap { position: relative; }
+.sidebar-notification-wrap .nav-item { width: 100%; }
+.sidebar-notification-popover { top: auto; right: auto; bottom: 0; left: calc(100% + 12px); }
 .popover-title { display: flex; justify-content: space-between; padding: 15px; border-bottom: 1px solid var(--line); font-size: 12px; }
 .popover-title span { color: var(--orange); font-size: 10px; }
 .notification-item { display: flex; gap: 9px; padding: 13px 15px; border-bottom: 1px solid #f0f2f4; }
