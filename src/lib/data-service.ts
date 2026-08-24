@@ -23,16 +23,22 @@ import { db, storage } from "@/firebase";
 
 type WithId = { id: string };
 
-/** Load a collection from Firestore, seeding it with `seed` the first time it is empty. */
+/**
+ * Load a collection from Firestore. If it's empty AND
+ * NEXT_PUBLIC_SEED_DEMO_DATA=true, it seeds it with `seed` first (useful
+ * for a brand-new demo/staging project). In production this flag should
+ * be left unset so an emptied collection simply stays empty.
+ */
 export async function loadOrSeedCollection<T extends WithId>(collectionName: string, seed: T[]): Promise<T[]> {
   const snapshot = await getDocs(collection(db, collectionName));
   if (!snapshot.empty) {
     return snapshot.docs.map((docSnap) => docSnap.data() as T);
   }
-  if (seed.length) {
+  if (seed.length && process.env.NEXT_PUBLIC_SEED_DEMO_DATA === "true") {
     await saveDocs(collectionName, seed);
+    return seed;
   }
-  return seed;
+  return [];
 }
 
 /**
