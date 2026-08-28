@@ -199,6 +199,10 @@ type Vehicle = {
   vin: string;
   registrationDate: string;
   inspectionDate: string;
+  // Set when this vehicle's identity (plate/brand/model/VIN) was picked
+  // from FleetGest (Parc Auto) rather than typed manually. FleetGest
+  // remains the source of truth for these 4 fields.
+  fleetVehicleId?: string;
 };
 
 type StockItem = {
@@ -382,7 +386,9 @@ function ActionButtons({ onPrint, onExport, onImport }: { onPrint?: () => void; 
   );
 }
 
-import { updateUserProfile, type UserProfile } from "@/lib/auth-service";
+import { collection, onSnapshot } from "firebase/firestore";
+import { db } from "@/firebase";
+import { createEmployeeAccount, deleteEmployeeAccount, updateUserProfile, type UserProfile } from "@/lib/auth-service";
 
 type DashboardShellProps = {
   currentUser: UserProfile;
@@ -410,11 +416,19 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
   const [modalDirty, setModalDirty] = useState(false);
   const [showMechanicForm, setShowMechanicForm] = useState(false);
   const [showVehicleForm, setShowVehicleForm] = useState(false);
+  const [fleetVehicles, setFleetVehicles] = useState<{ fleetVehicleId: string; plate: string; brand: string; model: string; vin: string }[]>([]);
+  const [fleetVehiclesConfigured, setFleetVehiclesConfigured] = useState(true);
+  const [fleetVehicleSearch, setFleetVehicleSearch] = useState("");
+  const [fleetVehiclePick, setFleetVehiclePick] = useState<{ fleetVehicleId: string; plate: string; brand: string; model: string; vin: string } | null>(null);
   const [showStockForm, setShowStockForm] = useState(false);
   const [showStockExitForm, setShowStockExitForm] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [employees, setEmployees] = useState<UserProfile[]>([]);
+  const [newEmployee, setNewEmployee] = useState({ username: "", role: "", password: "", email: "" });
+  const [creatingEmployee, setCreatingEmployee] = useState(false);
+  const [employeeFormError, setEmployeeFormError] = useState<string | null>(null);
   const [dismissedNotifications, setDismissedNotifications] = useState<Set<string>>(new Set());
   const [loggingOut, setLoggingOut] = useState(false);
   const [notice, setNotice] = useState("");
@@ -461,6 +475,14 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
     moduleOrder: {} as Record<string, string[]>
   });
   const [alertEmailDraft, setAlertEmailDraft] = useState("");
+  const [teamUsers, setTeamUsers] = useState<UserProfile[]>([]);
+  const [newUserUsername, setNewUserUsername] = useState("");
+  const [newUserPassword, setNewUserPassword] = useState("");
+  const [newUserRole, setNewUserRole] = useState("");
+  const [newUserEmail, setNewUserEmail] = useState("");
+  const [creatingUser, setCreatingUser] = useState(false);
+  const [userActionError, setUserActionError] = useState<string | null>(null);
+  const isAdmin = profile.role.trim().toLowerCase() === "admin";
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [dataReady, setDataReady] = useState(false);
   const [reorderMode, setReorderMode] = useState(false);
@@ -507,6 +529,7 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
         unsubscribers.push(subscribeToDoc<typeof settings>(SETTINGS_COLLECTION, SETTINGS_DOC_ID, (value) => {
           if (value) setSettings((current) => ({ ...current, ...value, alertEmails: value.alertEmails ?? [], garageCapacity: value.garageCapacity || current.garageCapacity, moduleOrder: value.moduleOrder ?? {} }));
         }));
+        unsubscribers.push(subscribeToCollection<UserProfile & { id: string }>("users", setTeamUsers));
       } catch (error) {
         console.error("[firestore] initial load failed:", error);
       } finally {
@@ -768,6 +791,27 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, [showNotifications]);
 
+  useEffect(() => {
+    if (!showVehicleForm) {
+      setFleetVehiclePick(null);
+      setFleetVehicleSearch("");
+      return;
+    }
+    let cancelled = false;
+    fetch("/api/fleet-vehicles")
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        setFleetVehicles(data.vehicles ?? []);
+        setFleetVehiclesConfigured(data.configured !== false);
+      })
+      .catch((error) => {
+        console.error("[fleet-vehicles] fetch failed:", error);
+        if (!cancelled) setFleetVehiclesConfigured(false);
+      });
+    return () => { cancelled = true; };
+  }, [showVehicleForm]);
+
   function flash(message: string) {
     setNotice(message);
     window.setTimeout(() => setNotice(""), 3200);
@@ -880,11 +924,13 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
       axles: parseInt(String(form.get("axles"))) || 2,
       vin: String(form.get("vin")),
       registrationDate,
-      inspectionDate: String(form.get("inspectionDate"))
+      inspectionDate: String(form.get("inspectionDate")),
+      ...(fleetVehiclePick ? { fleetVehicleId: fleetVehiclePick.fleetVehicleId } : {}),
     };
     setVehicles([...vehicles, newVehicle]);
     persist(saveDoc(VEHICLES_COLLECTION, newVehicle), "handleAddVehicle");
     setShowVehicleForm(false);
+    setFleetVehiclePick(null);
     setModalDirty(false);
     flash(`Le véhicule ${brand} ${model} a été ajouté.`);
   }
@@ -1121,6 +1167,38 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
     } finally {
       setUploadingPhoto(false);
       event.target.value = "";
+    }
+  }
+
+  async function handleCreateUser() {
+    setUserActionError(null);
+    if (!newUserUsername.trim() || newUserPassword.length < 6 || !newUserRole.trim()) {
+      setUserActionError("Identifiant, fonction et mot de passe (6 caractères minimum) sont requis.");
+      return;
+    }
+    setCreatingUser(true);
+    try {
+      await createEmployeeAccount({ username: newUserUsername.trim(), password: newUserPassword, role: newUserRole.trim(), email: newUserEmail.trim() || undefined });
+      flash(`Compte créé pour ${newUserUsername.trim()}.`);
+      setNewUserUsername("");
+      setNewUserPassword("");
+      setNewUserRole("");
+      setNewUserEmail("");
+    } catch (error) {
+      const message = (error as Error)?.message ?? "";
+      setUserActionError(message === "username_taken" ? "Cet identifiant est déjà utilisé." : "La création du compte a échoué. Réessayez.");
+    } finally {
+      setCreatingUser(false);
+    }
+  }
+
+  async function handleDeleteUser(uid: string, username: string) {
+    if (!window.confirm(`Supprimer l'accès de ${username} ? Cette action est irréversible.`)) return;
+    try {
+      await deleteEmployeeAccount(uid);
+      flash(`L'accès de ${username} a été supprimé.`);
+    } catch {
+      flash("La suppression du compte a échoué. Réessayez.");
     }
   }
 
@@ -2103,9 +2181,45 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
               <button className="icon-button" onClick={() => confirmedClose(() => setShowVehicleForm(false))}><Icon name="x" size={19} /></button>
             </div>
             <form onSubmit={handleAddVehicle} onChange={() => setModalDirty(true)}>
+              {fleetVehiclesConfigured && fleetVehicles.length > 0 && (
+                <div className="fleet-picker">
+                  {!fleetVehiclePick ? (
+                    <>
+                      <label>Importer l'identité depuis FleetGest (Parc Auto)
+                        <input type="text" placeholder="Rechercher par plaque, marque, modèle…" value={fleetVehicleSearch} onChange={(e) => setFleetVehicleSearch(e.target.value)} />
+                      </label>
+                      {fleetVehicleSearch.trim() && (
+                        <div className="fleet-picker-results">
+                          {fleetVehicles
+                            .filter((v) => {
+                              const q = fleetVehicleSearch.trim().toLowerCase();
+                              return v.plate.toLowerCase().includes(q) || v.brand.toLowerCase().includes(q) || v.model.toLowerCase().includes(q);
+                            })
+                            .slice(0, 6)
+                            .map((v) => (
+                              <button type="button" key={v.fleetVehicleId} onClick={() => { setFleetVehiclePick(v); setFleetVehicleSearch(""); }}>
+                                <strong>{v.plate}</strong><span>{v.brand} {v.model}</span>
+                              </button>
+                            ))}
+                          {fleetVehicles.filter((v) => {
+                            const q = fleetVehicleSearch.trim().toLowerCase();
+                            return v.plate.toLowerCase().includes(q) || v.brand.toLowerCase().includes(q) || v.model.toLowerCase().includes(q);
+                          }).length === 0 && <p className="fleet-picker-empty">Aucun véhicule FleetGest ne correspond — vous pouvez continuer en saisie manuelle ci-dessous.</p>}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="fleet-picker-selected">
+                      <Icon name="check" size={15} />
+                      <span>Identité importée depuis FleetGest : <strong>{fleetVehiclePick.plate}</strong> — {fleetVehiclePick.brand} {fleetVehiclePick.model}</span>
+                      <button type="button" onClick={() => setFleetVehiclePick(null)}>Changer</button>
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="detail-grid">
-                <label>Marque<input name="brand" placeholder="Ex. Mazda" required /></label><label>Modèle<input name="model" placeholder="Ex. BT-50" required /></label>
-                <label>Immatriculation<input name="plate" placeholder="3769-LH-01" required /></label><label>Date de première mise en circulation<input name="registrationDate" type="date" required /></label>
+                <label>Marque<input key={`brand-${fleetVehiclePick?.fleetVehicleId ?? "manual"}`} name="brand" defaultValue={fleetVehiclePick?.brand ?? ""} placeholder="Ex. Mazda" required readOnly={!!fleetVehiclePick} /></label><label>Modèle<input key={`model-${fleetVehiclePick?.fleetVehicleId ?? "manual"}`} name="model" defaultValue={fleetVehiclePick?.model ?? ""} placeholder="Ex. BT-50" required readOnly={!!fleetVehiclePick} /></label>
+                <label>Immatriculation<input key={`plate-${fleetVehiclePick?.fleetVehicleId ?? "manual"}`} name="plate" defaultValue={fleetVehiclePick?.plate ?? ""} placeholder="3769-LH-01" required readOnly={!!fleetVehiclePick} /></label><label>Date de première mise en circulation<input name="registrationDate" type="date" required /></label>
                 <label>Année<input name="year" type="number" placeholder="2022" required /></label><label>Kilométrage<input name="mileage" type="number" placeholder="45000" required /></label>
                 <label>Propriétaire / titulaire<input name="ownerName" placeholder="Raison sociale ou nom" required /></label><label>Adresse du propriétaire<input name="ownerAddress" placeholder="Adresse complète" required /></label>
                 <label>Type commercial<input name="commercialType" placeholder="Ex. BT 50 4x4 BVA" required /></label><label>Type / code national<input name="typeCode" placeholder="Ex. TF540" required /></label>
@@ -2115,7 +2229,7 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
                 <label>Cylindrée (cm³)<input name="displacement" type="number" placeholder="3195" required /></label><label>Nombre d'essieux<input name="axles" type="number" defaultValue="2" required /></label>
                 <label>PTAC (kg)<input name="grossWeight" type="number" placeholder="3150" required /></label><label>Poids à vide (kg)<input name="curbWeight" type="number" placeholder="1995" required /></label>
                 <label>Charge utile (kg)<input name="payload" type="number" placeholder="1155" required /></label><label>Visite technique valable jusqu'au<input name="inspectionDate" type="date" required /></label>
-                <label className="wide-field">Numéro d'identification / VIN<input name="vin" placeholder="Numéro de série constructeur" required /></label>
+                <label className="wide-field">Numéro d'identification / VIN<input key={`vin-${fleetVehiclePick?.fleetVehicleId ?? "manual"}`} name="vin" defaultValue={fleetVehiclePick?.vin ?? ""} placeholder="Numéro de série constructeur" required readOnly={!!fleetVehiclePick} /></label>
                 <label className="wide-field">Chauffeur assigné<input name="driver" placeholder="Nom du chauffeur" required /></label>
               </div>
               <div className="modal-actions">
@@ -2228,6 +2342,38 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
                 </label>
                 <label>Seuil d'alerte stock (% du minimum)<input name="alertThreshold" type="number" defaultValue={settings.alertThreshold} min="10" max="100" /></label>
               </div>
+              {isAdmin && (
+                <div className="settings-section user-management">
+                  <h3>Gestion des utilisateurs</h3>
+                  {teamUsers.length > 0 && (
+                    <ul className="team-users-list">
+                      {teamUsers.map((user) => (
+                        <li key={user.uid}>
+                          <div><strong>{user.username}</strong><span>{user.role}</span></div>
+                          {user.uid !== profile.uid ? (
+                            <button type="button" className="team-user-remove" onClick={() => handleDeleteUser(user.uid, user.username)} title="Supprimer cet accès"><Icon name="trash" size={14} /></button>
+                          ) : (
+                            <span className="team-user-self">vous</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="team-user-add">
+                    <span className="alert-emails-label">Ajouter un utilisateur</span>
+                    <div className="settings-row">
+                      <label>Identifiant<input type="text" value={newUserUsername} onChange={(e) => setNewUserUsername(e.target.value)} placeholder="ex. jkouassi" /></label>
+                      <label>Fonction<input type="text" value={newUserRole} onChange={(e) => setNewUserRole(e.target.value)} placeholder="ex. Réceptionniste" /></label>
+                    </div>
+                    <div className="settings-row">
+                      <label>Mot de passe temporaire<input type="text" value={newUserPassword} onChange={(e) => setNewUserPassword(e.target.value)} placeholder="6 caractères minimum" /></label>
+                      <label>Email (optionnel)<input type="email" value={newUserEmail} onChange={(e) => setNewUserEmail(e.target.value)} placeholder="nom@exemple.com" /></label>
+                    </div>
+                    {userActionError && <div className="auth-error">{userActionError}</div>}
+                    <button type="button" className="outline-button" disabled={creatingUser} onClick={handleCreateUser}>{creatingUser ? "Création…" : "Créer le compte"}</button>
+                  </div>
+                </div>
+              )}
               <div className="modal-actions">
                 <button type="button" className="outline-button" onClick={() => confirmedClose(() => setShowSettingsModal(false))}>Annuler</button>
                 <button type="submit" className="primary-button">Enregistrer <Icon name="save" size={15} /></button>

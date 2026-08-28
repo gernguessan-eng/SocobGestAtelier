@@ -91,3 +91,35 @@ export async function updateUserProfile(uid: string, updates: Partial<Pick<UserP
 export function subscribeToAuth(callback: (user: User | null) => void): () => void {
   return onAuthStateChanged(auth, callback);
 }
+
+/** Admin-only: creates an employee account without disturbing the admin's own session. */
+export async function createEmployeeAccount(params: { username: string; password: string; role: string; email?: string }): Promise<void> {
+  const currentUser = auth.currentUser;
+  if (!currentUser) throw new Error("not_authenticated");
+  const idToken = await currentUser.getIdToken();
+  const response = await fetch("/api/admin/create-user", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify(params),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "create_failed");
+  }
+}
+
+/** Admin-only: removes an employee's access. */
+export async function deleteEmployeeAccount(uid: string): Promise<void> {
+  const currentUser = auth.currentUser;
+  if (!currentUser) throw new Error("not_authenticated");
+  const idToken = await currentUser.getIdToken();
+  const response = await fetch("/api/admin/delete-user", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ uid }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "delete_failed");
+  }
+}

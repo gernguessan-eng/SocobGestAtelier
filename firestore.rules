@@ -1,13 +1,35 @@
 rules_version = '2';
 
-// Baseline rules for the workshop management app.
-// Data is only readable/writable by authenticated users of the app.
-// Adjust to your exact auth model (roles, per-workshop tenancy, etc.)
-// before going to production.
+// Rules for socob_GestAtelier.
+//
+// Business data (orders, mechanics, vehicles, stock, presence, settings...)
+// stays simple: any authenticated person can read/write it, matching how
+// the internal atelier team works today.
+//
+// `users` is different and more sensitive: it holds each account's role
+// (Admin / Utilisateur), which controls who can create or delete other
+// accounts. If we allowed the same broad rule here, anyone signed in
+// could edit their own document client-side and grant themselves Admin.
+// So `users` gets its own, tighter rule:
+//   - any signed-in person can read profiles (needed for names/avatars)
+//   - a person can update their OWN document, but never change their own
+//     `role` or `uid` field that way
+//   - accounts can only be created or deleted through the server-side
+//     Admin SDK routes (/api/admin/create-user, /api/admin/delete-user),
+//     never directly from the browser
 service cloud.firestore {
   match /databases/{database}/documents {
+    match /users/{userId} {
+      allow read: if request.auth != null;
+      allow update: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.uid == resource.data.uid;
+      allow create, delete: if false;
+    }
+
     match /{collection}/{docId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if request.auth != null && collection != "users";
     }
   }
 }

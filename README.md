@@ -93,6 +93,22 @@ dynamique mais écrite en dur). Éléments corrigés :
 - Un message de profil inventé — remplacé par les vraies informations
   du compte connecté.
 
+## Lien avec FleetGest (Parc Auto) — identité véhicule
+
+Lors de la création d'un véhicule, un encart optionnel permet de
+rechercher un véhicule existant dans **socobfleetgest** (projet Firebase
+séparé) et d'importer sa plaque, sa marque, son modèle et son numéro de
+châssis (VIN), au lieu de les ressaisir. FleetGest reste la seule source
+de vérité pour ces 4 champs — voir `src/firebase-admin-fleetgest.ts` et
+`src/app/api/fleet-vehicles/route.ts` : la lecture est en sens unique
+(aucune écriture n'est jamais faite vers FleetGest), donc ses données de
+production ne sont jamais exposées à un risque.
+
+C'est optionnel et non bloquant : tant que les 3 variables
+`FLEETGEST_FIREBASE_*` (voir `.env.example`) ne sont pas renseignées,
+l'encart de recherche reste simplement masqué et la saisie manuelle
+fonctionne normalement.
+
 ## Export / import Excel
 
 Chaque module (Ordres de réparation, Mécaniciens, Véhicules, Stocks,

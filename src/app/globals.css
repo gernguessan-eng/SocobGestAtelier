@@ -645,3 +645,29 @@ textarea { resize: vertical; }
 .profile-photo-hint { display: block; margin-top: 6px; color: var(--muted); font-size: 10.5px; }
 .sidebar-profile.clickable { cursor: pointer; }
 .sidebar-profile.clickable:hover { background: rgba(255,255,255,.06); border-radius: 8px; }
+
+/* --- FleetGest vehicle identity picker (in the "Nouveau véhicule" form) --- */
+.fleet-picker { margin: 4px 0 18px; padding: 14px; border: 1px dashed var(--orange); border-radius: 10px; background: var(--orange-soft); }
+.fleet-picker > label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; color: var(--ink); }
+.fleet-picker > label input { border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; font-size: 12.5px; font-family: var(--font-body); font-weight: 400; background: #fff; }
+.fleet-picker > label input:focus { outline: none; border-color: var(--orange); box-shadow: 0 0 0 3px rgba(199,154,46,.14); }
+.fleet-picker-results { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; max-height: 190px; overflow-y: auto; }
+.fleet-picker-results button { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: #fff; cursor: pointer; text-align: left; font-size: 12.5px; color: var(--ink); }
+.fleet-picker-results button:hover { border-color: var(--orange); background: #fffaf0; }
+.fleet-picker-results button span { color: var(--muted); }
+.fleet-picker-empty { margin: 8px 0 0; font-size: 11.5px; color: var(--muted); }
+.fleet-picker-selected { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: #4aa680; }
+.fleet-picker-selected strong { color: var(--ink); }
+.fleet-picker-selected button { margin-left: auto; border: none; background: transparent; color: var(--orange-dark); font-size: 11.5px; font-weight: 700; cursor: pointer; text-decoration: underline; }
+
+/* --- Admin-only user management panel (inside Paramètres) --- */
+.user-management h3 { margin-bottom: 4px; }
+.team-users-list { list-style: none; margin: 0 0 4px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.team-users-list li { display: flex; align-items: center; justify-content: space-between; padding: 8px 11px; border-radius: 8px; background: var(--canvas); font-size: 12.5px; }
+.team-users-list li div { display: flex; flex-direction: column; }
+.team-users-list li strong { color: var(--ink); }
+.team-users-list li span { color: var(--muted); font-size: 11px; }
+.team-user-remove { border: none; background: transparent; color: var(--muted); cursor: pointer; display: inline-flex; padding: 4px; }
+.team-user-remove:hover { color: #c5634a; }
+.team-user-self { font-size: 10.5px; color: var(--muted); font-style: italic; }
+.team-user-add { display: flex; flex-direction: column; gap: 10px; padding-top: 8px; border-top: 1px dashed var(--line); }
