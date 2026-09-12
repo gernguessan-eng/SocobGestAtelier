@@ -153,6 +153,13 @@ type Order = {
   legacyParts?: string[];
 };
 
+type FleetVehicleIdentity = {
+  fleetVehicleId: string; plate: string; brand: string; model: string; vin: string; genre: string;
+  ownerName: string; bodyType: string; color: string; commercialType: string; registrationDate: string;
+  fuel: string; seats: number; grossWeight: number; axles: number; displacement: number;
+  fiscalPower: number; curbWeight: number; payload: number; mileage: number; assignedDriver: string;
+};
+
 type Mechanic = {
   id: string;
   name: string;
@@ -199,6 +206,10 @@ type Vehicle = {
   vin: string;
   registrationDate: string;
   inspectionDate: string;
+  // Vehicle category/class ("genre" in French admin terms — e.g.
+  // "Camionnette", "Berline"). Optional: only populated when the vehicle
+  // was imported from FleetGest; manually-created vehicles simply omit it.
+  genre?: string;
   // Set when this vehicle's identity (plate/brand/model/VIN) was picked
   // from FleetGest (Parc Auto) rather than typed manually. FleetGest
   // remains the source of truth for these 4 fields.
@@ -416,10 +427,11 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
   const [modalDirty, setModalDirty] = useState(false);
   const [showMechanicForm, setShowMechanicForm] = useState(false);
   const [showVehicleForm, setShowVehicleForm] = useState(false);
-  const [fleetVehicles, setFleetVehicles] = useState<{ fleetVehicleId: string; plate: string; brand: string; model: string; vin: string }[]>([]);
+  const [fleetVehicles, setFleetVehicles] = useState<FleetVehicleIdentity[]>([]);
   const [fleetVehiclesConfigured, setFleetVehiclesConfigured] = useState(true);
   const [fleetVehicleSearch, setFleetVehicleSearch] = useState("");
-  const [fleetVehiclePick, setFleetVehiclePick] = useState<{ fleetVehicleId: string; plate: string; brand: string; model: string; vin: string } | null>(null);
+  const [fleetVehiclePick, setFleetVehiclePick] = useState<FleetVehicleIdentity | null>(null);
+  const [importingFleetVehicles, setImportingFleetVehicles] = useState(false);
   const [showStockForm, setShowStockForm] = useState(false);
   const [showStockExitForm, setShowStockExitForm] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -933,6 +945,107 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
     setFleetVehiclePick(null);
     setModalDirty(false);
     flash(`Le véhicule ${brand} ${model} a été ajouté.`);
+  }
+
+  async function handleImportAllFleetVehicles() {
+    setImportingFleetVehicles(true);
+    try {
+      const response = await fetch("/api/fleet-vehicles");
+      const data = await response.json();
+      const fleetList: FleetVehicleIdentity[] = data.vehicles ?? [];
+      if (!data.configured) {
+        flash("La liaison avec FleetGest n'est pas configurée.");
+        return;
+      }
+      if (!fleetList.length) {
+        flash("Aucun véhicule trouvé dans FleetGest.");
+        return;
+      }
+
+      const existingByFleetId = new Map(vehicles.filter((v) => v.fleetVehicleId).map((v) => [v.fleetVehicleId as string, v]));
+      const today = new Date().toISOString().slice(0, 10);
+      const currentYear = new Date().getFullYear();
+      let nextIdCounter = vehicles.length;
+      const created: Vehicle[] = [];
+      const updated: Vehicle[] = [];
+
+      fleetList.forEach((fv) => {
+        const existing = existingByFleetId.get(fv.fleetVehicleId);
+        // Fields kept in sync on every re-run: static vehicle identity/specs,
+        // where FleetGest is the source of truth. "Statut" is intentionally
+        // never touched (the atelier's own order-based logic owns it), and
+        // "mileage"/"assignedDriver" are only set on first creation, since
+        // those two tend to be updated locally once the vehicle is active
+        // in the atelier.
+        const syncedFields = {
+          plate: fv.plate, brand: fv.brand, vin: fv.vin,
+          bodyType: fv.bodyType, typeCode: fv.genre,
+          ownerName: fv.ownerName, color: fv.color, commercialType: fv.commercialType,
+          registrationDate: fv.registrationDate, fuel: fv.fuel, seats: fv.seats,
+          grossWeight: fv.grossWeight, axles: fv.axles, displacement: fv.displacement,
+          fiscalPower: fv.fiscalPower, curbWeight: fv.curbWeight, payload: fv.payload,
+        };
+
+        if (existing) {
+          const changed = (Object.keys(syncedFields) as Array<keyof typeof syncedFields>).some((key) => existing[key] !== syncedFields[key]);
+          if (changed) {
+            updated.push({ ...existing, ...syncedFields });
+          }
+        } else {
+          nextIdCounter += 1;
+          created.push({
+            id: `V${String(nextIdCounter).padStart(3, "0")}`,
+            brand: fv.brand,
+            model: "",
+            plate: fv.plate,
+            vin: fv.vin,
+            bodyType: fv.bodyType,
+            typeCode: fv.genre,
+            ownerName: fv.ownerName,
+            color: fv.color,
+            commercialType: fv.commercialType,
+            registrationDate: fv.registrationDate || today,
+            fuel: fv.fuel,
+            seats: fv.seats,
+            grossWeight: fv.grossWeight,
+            axles: fv.axles,
+            displacement: fv.displacement,
+            fiscalPower: fv.fiscalPower,
+            curbWeight: fv.curbWeight,
+            payload: fv.payload,
+            mileage: fv.mileage,
+            assignedDriver: fv.assignedDriver || "Non assigné",
+            fleetVehicleId: fv.fleetVehicleId,
+            year: currentYear,
+            status: "Opérationnel",
+            statusDate: today,
+            lastRevisionKm: 0,
+            nextRevisionKm: 0,
+            lastMaintenance: today,
+            nextMaintenance: "",
+            ownerAddress: "",
+            enginePower: 0,
+            inspectionDate: today,
+          });
+        }
+      });
+
+      if (created.length) {
+        setVehicles((current) => [...current, ...created]);
+        persist(saveDocs(VEHICLES_COLLECTION, created), "import all fleet vehicles - create");
+      }
+      if (updated.length) {
+        setVehicles((current) => current.map((v) => updated.find((u) => u.id === v.id) ?? v));
+        persist(saveDocs(VEHICLES_COLLECTION, updated), "import all fleet vehicles - update");
+      }
+      const unchanged = fleetList.length - created.length - updated.length;
+      flash(`Import FleetGest : ${created.length} créé(s), ${updated.length} mis à jour, ${unchanged} déjà à jour.`);
+    } catch (error) {
+      console.error("[fleet-vehicles] bulk import failed:", error);
+      flash("L'import depuis FleetGest a échoué. Réessayez.");
+    } finally {
+      setImportingFleetVehicles(false);
+    }
   }
 
   function handleAddStockItem(event: FormEvent<HTMLFormElement>) {
@@ -1559,6 +1672,11 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
                 <div className="module-search"><Icon name="search" size={15} /><input type="search" placeholder="Rechercher une plaque, un modèle, un chauffeur…" value={vehicleSearch} onChange={(event) => setVehicleSearch(event.target.value)} /></div>
                 <PeriodSelector from={vehiclePeriod.from} to={vehiclePeriod.to} onChange={(from, to) => setVehiclePeriod({ from, to })} />
                 <ActionButtons onPrint={handlePrint} onExport={handleExport} onImport={handleImport} />
+                {fleetVehiclesConfigured && (
+                  <button className="outline-button" disabled={importingFleetVehicles} onClick={handleImportAllFleetVehicles}>
+                    <Icon name="download" size={15} /> {importingFleetVehicles ? "Import en cours…" : "Importer tous les véhicules FleetGest"}
+                  </button>
+                )}
                 <button className="primary-button" onClick={() => setShowVehicleForm(true)}><Icon name="plus" size={18} /> Nouveau véhicule</button>
               </div>
             </div>

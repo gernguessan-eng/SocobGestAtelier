@@ -80,12 +80,16 @@ export async function saveDoc<T extends WithId>(collectionName: string, item: T)
   await setDoc(doc(db, collectionName, item.id), item as Record<string, unknown>);
 }
 
-/** Create or overwrite several documents in one batched write. */
+/** Create or overwrite several documents, automatically split into batches of 500 (Firestore's limit per batch). */
 export async function saveDocs<T extends WithId>(collectionName: string, items: T[]): Promise<void> {
   if (!items.length) return;
-  const batch = writeBatch(db);
-  items.forEach((item) => batch.set(doc(db, collectionName, item.id), item as Record<string, unknown>));
-  await batch.commit();
+  const CHUNK_SIZE = 500;
+  for (let i = 0; i < items.length; i += CHUNK_SIZE) {
+    const chunk = items.slice(i, i + CHUNK_SIZE);
+    const batch = writeBatch(db);
+    chunk.forEach((item) => batch.set(doc(db, collectionName, item.id), item as Record<string, unknown>));
+    await batch.commit();
+  }
 }
 
 /** Persist a singleton document (e.g. app settings) under a fixed id. */
