@@ -35,14 +35,21 @@ function usernameToEmail(username: string): string {
   return `${normalized}@${AUTH_DOMAIN}`;
 }
 
+// Roles that a self-service signup can never claim for itself. Admin
+// access must always be granted afterwards by an existing admin, via the
+// "Gestion des utilisateurs" panel — never chosen at signup time.
+const RESTRICTED_SELF_SIGNUP_ROLES = ["admin", "administrateur"];
+
 export async function signUp(username: string, password: string, role: string, email?: string): Promise<UserProfile> {
   const pseudoEmail = usernameToEmail(username);
   const credential = await createUserWithEmailAndPassword(auth, pseudoEmail, password);
   await updateProfile(credential.user, { displayName: username.trim() });
+  const requestedRole = role.trim();
+  const safeRole = RESTRICTED_SELF_SIGNUP_ROLES.includes(requestedRole.toLowerCase()) ? "Employé" : (requestedRole || "Employé");
   const profile: UserProfile = {
     uid: credential.user.uid,
     username: username.trim(),
-    role: role.trim() || "Utilisateur",
+    role: safeRole,
     email: email?.trim() || null,
     photoURL: null,
   };
