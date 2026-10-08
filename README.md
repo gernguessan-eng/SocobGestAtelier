@@ -109,6 +109,21 @@ C'est optionnel et non bloquant : tant que les 3 variables
 l'encart de recherche reste simplement masqué et la saisie manuelle
 fonctionne normalement.
 
+## Module "Fiches d'intervention"
+
+Digitalise le formulaire papier SOCOB "FICHE DE RAPPORT D'INTERVENTION"
+(menu Exploitation → Fiches d'intervention). Tous les champs qui étaient
+remplis au stylo sur le papier sont **vierges** dans l'application : centre
+concerné, N° de rapport, véhicule concerné, nom de l'intervenant, heures de
+début/fin (la durée est calculée automatiquement), nature de
+l'intervention, tableau des pièces remplacées (désignation / référence /
+quantité, lignes ajoutées librement), diagnostic, état après intervention,
+observation, essais effectués (Oui/Non), et les noms de l'intervenant et du
+responsable (en remplacement de la signature manuscrite). Chaque fiche est
+stockée dans Firestore (`interventionReports`) et synchronisée en temps
+réel comme le reste de l'application ; elle peut être recherchée, modifiée,
+imprimée, exportée en Excel ou supprimée.
+
 ## Export / import Excel
 
 Chaque module (Ordres de réparation, Mécaniciens, Véhicules, Stocks,
@@ -171,6 +186,7 @@ Collections Firestore utilisées :
 - `stock`
 - `stockExits`
 - `presence`
+- `interventionReports`
 - `settings` (document unique `app`)
 
 ## Configuration Firebase requise

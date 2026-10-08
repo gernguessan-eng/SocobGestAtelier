@@ -301,6 +301,13 @@ textarea { resize: vertical; }
 .parts-add { display: grid; grid-template-columns: 1fr 80px auto; gap: 8px; }
 .parts-add select, .parts-add input { min-height: 36px; padding: 0 10px; border: 1px solid #dfe6ea; border-radius: 6px; font-size: 11px; color: #34465a; background: #fff; }
 .section-hint { margin-left: 8px; color: #98a4af; font-style: normal; font-size: 10px; font-weight: 400; }
+
+/* Fiche d'intervention — free-text parts table (designation/référence/qté) */
+.intervention-parts-row { grid-template-columns: minmax(0, 1.6fr) 90px 34px; }
+.intervention-parts-add { grid-template-columns: 1.4fr 1fr 70px auto; }
+.tests-performed-row { display: flex; align-items: center; gap: 18px; margin-top: 12px; color: #506271; font-size: 11px; font-weight: 650; }
+.radio-inline { display: flex; align-items: center; gap: 6px; font-weight: 500; color: #34465a; }
+.radio-inline input { width: auto; min-height: auto; }
 .field-hint { display: block; margin-top: 3px; color: #8895a0; font-size: 9.5px; font-style: normal; }
 .revision-due { display: inline-block; margin-left: 6px; padding: 2px 7px; background: #fbe1da; color: #b23b25; border-radius: 10px; font-size: 9px; font-weight: 700; letter-spacing: .05em; font-style: normal; }
 

@@ -51,7 +51,8 @@ type IconName =
   | "trash"
   | "close"
   | "calendarRange"
-  | "logout";
+  | "logout"
+  | "fileText";
 
 function Icon({ name, size = 18, strokeWidth = 1.8 }: { name: IconName; size?: number; strokeWidth?: number }) {
   const common = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true };
@@ -128,6 +129,8 @@ function Icon({ name, size = 18, strokeWidth = 1.8 }: { name: IconName; size?: n
       return <svg {...common}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><path d="M17 21v-8H7v8" /><path d="M7 3v5h8" /></svg>;
     case "trash":
       return <svg {...common}><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>;
+    case "fileText":
+      return <svg {...common}><path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" /><path d="M14 3v5h5" /><path d="M8.5 12.5h7M8.5 15.5h7M8.5 18h4" /></svg>;
   }
 }
 
@@ -151,6 +154,33 @@ type Order = {
   cost: number;
   parts: OrderPart[];
   legacyParts?: string[];
+};
+
+// "Fiche d'intervention" — the digital version of SOCOB's paper
+// "FICHE DE RAPPORT D'INTERVENTION" form. Every field below is left
+// blank by default (see blankInterventionReport): the paper form is
+// filled in by hand at the time of the intervention, so the app must
+// present an empty form for manual entry rather than pre-filling any
+// example/demo value.
+type InterventionPart = { id: string; designation: string; reference: string; quantity: number };
+type InterventionReport = {
+  id: string;
+  number: string; // "Rapport d'intervention N°" — the paper booklet's printed/stamped number
+  center: string; // "Centre concerné"
+  vehiclePlate: string; // optional link to a vehicle, by plate (not on the paper form, added for traceability)
+  date: string;
+  intervenantName: string; // "Nom de l'intervenant"
+  startTime: string; // "Début de l'intervention"
+  endTime: string; // "Fin de l'intervention"
+  natureOfIntervention: string;
+  parts: InterventionPart[]; // "Pièces ou éléments remplacés"
+  diagnostic: string;
+  stateAfter: string; // "État après intervention"
+  observation: string;
+  testsPerformed: "" | "Oui" | "Non"; // "Essais effectués"
+  intervenantSignatureName: string; // typed name standing in for "Signature de l'Intervenant"
+  responsableName: string; // typed name standing in for "Signature du Responsable"
+  createdAt: string;
 };
 
 type FleetVehicleIdentity = {
@@ -289,8 +319,33 @@ const VEHICLES_COLLECTION = "vehicles";
 const STOCK_COLLECTION = "stock";
 const STOCK_EXITS_COLLECTION = "stockExits";
 const PRESENCE_COLLECTION = "presence";
+const INTERVENTIONS_COLLECTION = "interventionReports";
 const SETTINGS_COLLECTION = "settings";
 const SETTINGS_DOC_ID = "app";
+
+// A brand-new "Fiche d'intervention": every field blank, ready for
+// manual entry — nothing here is pre-filled from the sample paper form.
+function blankInterventionReport(nextIndex: number): InterventionReport {
+  return {
+    id: `FI-${String(nextIndex).padStart(4, "0")}`,
+    number: "",
+    center: "",
+    vehiclePlate: "",
+    date: new Date().toISOString().slice(0, 10),
+    intervenantName: "",
+    startTime: "",
+    endTime: "",
+    natureOfIntervention: "",
+    parts: [],
+    diagnostic: "",
+    stateAfter: "",
+    observation: "",
+    testsPerformed: "",
+    intervenantSignatureName: "",
+    responsableName: "",
+    createdAt: new Date().toISOString(),
+  };
+}
 
 // Initial data
 const initialOrders: Order[] = [
@@ -330,6 +385,11 @@ const initialStockExits: StockExit[] = [
   { id: "S003", itemId: "P003", itemName: "Huile moteur 5W30", date: "2024-10-22", quantity: 5, reason: "Ordre atelier", targetVehicle: "EF-715-GH", targetOrder: "OR-2046", notes: "Sortie atelier pour Peugeot Boxer 2020 (EF-715-GH)" },
 ];
 
+// No demo/sample data for intervention reports: this module starts
+// genuinely empty in every environment (the paper form's example values
+// must never appear as if they were real records).
+const initialInterventionReports: InterventionReport[] = [];
+
 const initialPresenceEntries: PresenceEntry[] = [
   { mechanicId: "M001", date: "2024-10-24", status: "Présent", arrival: "07:45", departure: "17:00" },
   { mechanicId: "M002", date: "2024-10-24", status: "Présent", arrival: "07:50", departure: "17:00" },
@@ -345,7 +405,7 @@ const daysThirty = ["01", "04", "07", "10", "13", "16", "19", "22", "25", "28", 
 
 const navSections: Array<{ label: string; items: Array<{ label: string; icon: IconName; badge?: "orders" | "stock" }> }> = [
   { label: "PILOTAGE", items: [{ label: "Vue d'ensemble", icon: "grid" }] },
-  { label: "EXPLOITATION", items: [{ label: "Ordres de réparation", icon: "clipboard", badge: "orders" }, { label: "Planning atelier", icon: "calendar" }, { label: "Véhicules", icon: "truck" }] },
+  { label: "EXPLOITATION", items: [{ label: "Ordres de réparation", icon: "clipboard", badge: "orders" }, { label: "Planning atelier", icon: "calendar" }, { label: "Véhicules", icon: "truck" }, { label: "Fiches d'intervention", icon: "fileText" }] },
   { label: "RESSOURCES", items: [{ label: "Mécaniciens", icon: "users" }, { label: "Stocks", icon: "box", badge: "stock" }, { label: "Présences", icon: "clock" }] },
 ];
 
@@ -473,6 +533,10 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
   const [presenceDate, setPresenceDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [presenceEntries, setPresenceEntries] = useState<PresenceEntry[]>([]);
   const [selectedKpi, setSelectedKpi] = useState<KpiDetail>(null);
+  const [interventionReports, setInterventionReports] = useState<InterventionReport[]>([]);
+  const [interventionDraft, setInterventionDraft] = useState<InterventionReport | null>(null);
+  const [interventionSearch, setInterventionSearch] = useState("");
+  const [interventionPeriod, setInterventionPeriod] = useState({ from: "2020-01-01", to: "2035-12-31" });
   
   // Settings state
   const [settings, setSettings] = useState({
@@ -515,6 +579,7 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
           loadOrSeedCollection<Vehicle>(VEHICLES_COLLECTION, initialVehicles),
           loadOrSeedCollection<StockItem>(STOCK_COLLECTION, initialStock),
           loadOrSeedCollection<StockExit>(STOCK_EXITS_COLLECTION, initialStockExits),
+          loadOrSeedCollection<InterventionReport>(INTERVENTIONS_COLLECTION, initialInterventionReports),
           loadOrSeedDoc(SETTINGS_COLLECTION, SETTINGS_DOC_ID, settings),
         ]);
         const seededPresenceEntries = initialPresenceEntries.map((entry) => ({ ...entry, id: presenceDocId(entry) }));
@@ -537,6 +602,7 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
         unsubscribers.push(subscribeToCollection<Vehicle>(VEHICLES_COLLECTION, setVehicles));
         unsubscribers.push(subscribeToCollection<StockItem>(STOCK_COLLECTION, setStock));
         unsubscribers.push(subscribeToCollection<StockExit>(STOCK_EXITS_COLLECTION, setStockExits));
+        unsubscribers.push(subscribeToCollection<InterventionReport>(INTERVENTIONS_COLLECTION, setInterventionReports));
         unsubscribers.push(subscribeToCollection<PresenceEntry & { id: string }>(PRESENCE_COLLECTION, setPresenceEntries));
         unsubscribers.push(subscribeToDoc<typeof settings>(SETTINGS_COLLECTION, SETTINGS_DOC_ID, (value) => {
           if (value) setSettings((current) => ({ ...current, ...value, alertEmails: value.alertEmails ?? [], garageCapacity: value.garageCapacity || current.garageCapacity, moduleOrder: value.moduleOrder ?? {} }));
@@ -619,6 +685,14 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
       if (!search) return true;
       return [item.name, item.role, item.email, item.phone, item.state, ...item.specialties].some((field) => field.toLowerCase().includes(search));
     });
+  const interventionList = interventionReports
+    .filter((item) => isInPeriod(item.date, interventionPeriod.from, interventionPeriod.to))
+    .filter((item) => {
+      const search = interventionSearch.trim().toLowerCase();
+      if (!search) return true;
+      return [item.id, item.number, item.center, item.vehiclePlate, item.intervenantName, item.natureOfIntervention].some((field) => field.toLowerCase().includes(search));
+    })
+    .sort((a, b) => (a.date === b.date ? b.id.localeCompare(a.id) : b.date.localeCompare(a.date)));
   const stockMovements = stockExits.filter((item) => isInPeriod(item.date, stockPeriod.from, stockPeriod.to));
   const dashboardExits = stockExits.filter((item) => isInPeriod(item.date, dashboardPeriod.from, dashboardPeriod.to));
   const displayedStock = useMemo(() => {
@@ -787,9 +861,10 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
   }
 
   // Whenever a modal opens (or closes), it starts from a clean slate.
+  const interventionModalClosed = interventionDraft === null;
   useEffect(() => {
     setModalDirty(false);
-  }, [showOrderForm, showMechanicForm, showVehicleForm, showStockForm, showStockExitForm, showSettingsModal, showProfileModal, selectedOrder, selectedMechanic, selectedVehicle, selectedStockItem, quickExitItem]);
+  }, [showOrderForm, showMechanicForm, showVehicleForm, showStockForm, showStockExitForm, showSettingsModal, showProfileModal, selectedOrder, selectedMechanic, selectedVehicle, selectedStockItem, quickExitItem, interventionModalClosed]);
 
   useEffect(() => {
     if (!showNotifications) return;
@@ -945,6 +1020,73 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
     setFleetVehiclePick(null);
     setModalDirty(false);
     flash(`Le véhicule ${brand} ${model} a été ajouté.`);
+  }
+
+  function addInterventionPart(e: { currentTarget: HTMLElement }) {
+    const form = e.currentTarget.closest("form") as HTMLFormElement | null;
+    if (!form || !interventionDraft) return;
+    const data = new FormData(form);
+    const designation = String(data.get("newPartDesignation") || "").trim();
+    if (!designation) { flash("Indiquez une désignation pour la pièce."); return; }
+    const reference = String(data.get("newPartReference") || "").trim();
+    const quantity = Math.max(1, parseInt(String(data.get("newPartQty"))) || 1);
+    const newPart: InterventionPart = { id: `part-${interventionDraft.parts.length + 1}-${designation.slice(0, 12).replace(/\s+/g, "-")}`, designation, reference, quantity };
+    setInterventionDraft({ ...interventionDraft, parts: [...interventionDraft.parts, newPart] });
+    const designationInput = form.elements.namedItem("newPartDesignation") as HTMLInputElement | null;
+    const referenceInput = form.elements.namedItem("newPartReference") as HTMLInputElement | null;
+    const qtyInput = form.elements.namedItem("newPartQty") as HTMLInputElement | null;
+    if (designationInput) designationInput.value = "";
+    if (referenceInput) referenceInput.value = "";
+    if (qtyInput) qtyInput.value = "1";
+    setModalDirty(true);
+  }
+
+  function removeInterventionPart(idx: number) {
+    if (!interventionDraft) return;
+    setInterventionDraft({ ...interventionDraft, parts: interventionDraft.parts.filter((_, i) => i !== idx) });
+    setModalDirty(true);
+  }
+
+  function handleSaveInterventionReport(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!interventionDraft) return;
+    const form = new FormData(event.currentTarget);
+    const startTime = String(form.get("startTime") || "");
+    const endTime = String(form.get("endTime") || "");
+    const isNew = !interventionReports.some((item) => item.id === interventionDraft.id);
+    const saved: InterventionReport = {
+      ...interventionDraft,
+      number: String(form.get("number") || ""),
+      center: String(form.get("center") || ""),
+      vehiclePlate: String(form.get("vehiclePlate") || ""),
+      date: String(form.get("date") || interventionDraft.date),
+      intervenantName: String(form.get("intervenantName") || ""),
+      startTime,
+      endTime,
+      natureOfIntervention: String(form.get("natureOfIntervention") || ""),
+      diagnostic: String(form.get("diagnostic") || ""),
+      stateAfter: String(form.get("stateAfter") || ""),
+      observation: String(form.get("observation") || ""),
+      testsPerformed: (String(form.get("testsPerformed") || "") as InterventionReport["testsPerformed"]),
+      intervenantSignatureName: String(form.get("intervenantSignatureName") || ""),
+      responsableName: String(form.get("responsableName") || ""),
+    };
+    if (isNew) {
+      setInterventionReports((current) => [saved, ...current]);
+    } else {
+      setInterventionReports((current) => current.map((item) => (item.id === saved.id ? saved : item)));
+    }
+    persist(saveDoc(INTERVENTIONS_COLLECTION, saved), "handleSaveInterventionReport");
+    setInterventionDraft(null);
+    setModalDirty(false);
+    flash(isNew ? `La fiche d'intervention ${saved.id} a été créée.` : `La fiche d'intervention ${saved.id} a été mise à jour.`);
+  }
+
+  function handleDeleteInterventionReport(id: string) {
+    setInterventionReports((current) => current.filter((item) => item.id !== id));
+    persist(removeDoc(INTERVENTIONS_COLLECTION, id), "handleDeleteInterventionReport");
+    setInterventionDraft(null);
+    flash(`La fiche d'intervention ${id} a été supprimée.`);
   }
 
   async function handleImportAllFleetVehicles() {
@@ -1349,6 +1491,7 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
       : activeNav === "Mécaniciens" ? mechanics.map((item) => ({ ...item, specialties: item.specialties.join(" | ") }))
       : activeNav === "Stocks" ? stock.map((item) => ({ ...item }))
       : activeNav === "Présences" ? presenceEntries.map((item) => ({ ...item }))
+      : activeNav === "Fiches d'intervention" ? interventionReports.map((item) => ({ ...item, parts: item.parts.map((p) => `${p.designation}${p.reference ? ` (${p.reference})` : ""} x${p.quantity}`).join(" | ") }))
       : orders.map((item) => ({ ...item, parts: item.parts.map((p) => `${p.itemName} x${p.quantity}`).join(" | ") }));
     if (!records.length) {
       flash("Aucune donnée à exporter pour cette période.");
@@ -1713,7 +1856,54 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
             </div>
           </div>
         );
-      
+
+      case "Fiches d'intervention":
+        return (
+          <div className="module-page">
+            <div className="module-header">
+              <div>
+                <p className="eyebrow">RAPPORTS D'ATELIER</p>
+                <h1>Fiches d'intervention</h1>
+              </div>
+              <div className="module-actions">
+                <div className="module-search"><Icon name="search" size={15} /><input type="search" placeholder="Rechercher un N°, un centre, un intervenant…" value={interventionSearch} onChange={(event) => setInterventionSearch(event.target.value)} /></div>
+                <PeriodSelector from={interventionPeriod.from} to={interventionPeriod.to} onChange={(from, to) => setInterventionPeriod({ from, to })} />
+                <ActionButtons onPrint={handlePrint} onExport={handleExport} />
+                <button className="primary-button" onClick={() => setInterventionDraft(blankInterventionReport(interventionReports.length + 1))}><Icon name="plus" size={18} /> Nouvelle fiche</button>
+              </div>
+            </div>
+            <div className="panel full-panel">
+              <div className="orders-table">
+                <div className="table-head">
+                  <span>FICHE / CENTRE</span>
+                  <span>INTERVENANT</span>
+                  <span>NATURE</span>
+                  <span>DATE</span>
+                  <span>DURÉE</span>
+                  <span />
+                </div>
+                {interventionList.map((report) => {
+                  const minutes = minutesBetween(report.startTime, report.endTime);
+                  return (
+                    <div className="order-row clickable" key={report.id} onClick={() => setInterventionDraft({ ...report })}>
+                      <div className="order-vehicle">
+                        <strong>{report.number ? `N° ${report.number}` : report.id}</strong>
+                        <div><b>{report.center || "Centre non renseigné"}</b><span>{report.vehiclePlate}</span></div>
+                      </div>
+                      <div className="mechanic-cell"><Avatar initials={initialsFromName(report.intervenantName || "?")} small /><span>{report.intervenantName || "Non renseigné"}</span></div>
+                      <span className="issue-cell">{report.natureOfIntervention || "—"}</span>
+                      <span className="date-cell">{report.date}</span>
+                      <span className="duration-cell"><Icon name="clock" size={14} />{report.startTime && report.endTime ? durationLabel(minutes) : "—"}</span>
+                      <button className="row-more" onClick={(e) => e.stopPropagation()} aria-label={`Options ${report.id}`}><Icon name="more" size={17} /></button>
+                    </div>
+                  );
+                })}
+                {interventionList.length === 0 && <div className="empty-row">Aucune fiche d&apos;intervention ne correspond à votre recherche.</div>}
+              </div>
+            </div>
+          </div>
+        );
+
       case "Stocks":
         return (
           <div className="module-page stock-page">
@@ -2358,6 +2548,86 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
           </div>
         </div>
       )}
+
+      {interventionDraft && (() => {
+        const draft = interventionDraft;
+        const isNewIntervention = !interventionReports.some((item) => item.id === draft.id);
+        const previewMinutes = minutesBetween(draft.startTime, draft.endTime);
+        return (
+          <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) confirmedClose(() => setInterventionDraft(null)); }}>
+            <div className="modal detail-modal">
+              <div className="modal-header">
+                <div><p className="eyebrow">FICHE DE RAPPORT D&apos;INTERVENTION</p><h2>{draft.number ? `N° ${draft.number}` : draft.id}</h2></div>
+                <div className="modal-actions">
+                  <ActionButtons onPrint={handlePrint} />
+                  <button className="icon-button" onClick={() => confirmedClose(() => setInterventionDraft(null))}><Icon name="x" size={19} /></button>
+                </div>
+              </div>
+              <form onChange={() => setModalDirty(true)} onSubmit={handleSaveInterventionReport}>
+                <div className="detail-grid">
+                  <label>Centre concerné<input name="center" defaultValue={draft.center} placeholder="Ex. SOCOB Agboville" /></label>
+                  <label>Rapport d&apos;intervention N°<input name="number" defaultValue={draft.number} placeholder="Ex. 0000457" /></label>
+                  <label>Véhicule concerné (plaque)<input name="vehiclePlate" defaultValue={draft.vehiclePlate} placeholder="Ex. AB-482-CD" /></label>
+                  <label>Date de l&apos;intervention<input name="date" type="date" defaultValue={draft.date} /></label>
+                  <label>Nom de l&apos;intervenant<input name="intervenantName" defaultValue={draft.intervenantName} placeholder="Nom complet" /></label>
+                  <label>Nature de l&apos;intervention<input name="natureOfIntervention" defaultValue={draft.natureOfIntervention} placeholder="Ex. Électricité" /></label>
+                  <label>Début de l&apos;intervention<input name="startTime" type="time" defaultValue={draft.startTime} /></label>
+                  <label>Fin de l&apos;intervention<input name="endTime" type="time" defaultValue={draft.endTime} /></label>
+                </div>
+                <div className="work-duration-preview"><Icon name="clock" size={16} /> Durée de l&apos;intervention : <strong>{draft.startTime && draft.endTime ? durationLabel(previewMinutes) : "à renseigner"}</strong></div>
+
+                <div className="detail-section">
+                  <h4>Pièces ou éléments remplacés</h4>
+                  <div className="parts-editor">
+                    {draft.parts.map((part, idx) => (
+                      <div className="parts-row intervention-parts-row" key={part.id}>
+                        <span className="parts-name"><strong>{part.designation}</strong>{part.reference && <em>Réf. {part.reference}</em>}</span>
+                        <span className="parts-qty">Qté : <strong>{part.quantity}</strong></span>
+                        <button type="button" className="parts-remove" title="Retirer" onClick={() => removeInterventionPart(idx)}><Icon name="trash" size={14} /></button>
+                      </div>
+                    ))}
+                    {draft.parts.length === 0 && <div className="parts-empty">Aucune pièce ajoutée.</div>}
+                  </div>
+                  <div className="parts-add intervention-parts-add">
+                    <input name="newPartDesignation" placeholder="Désignation (ex. Électrovanne de marche AV)" />
+                    <input name="newPartReference" placeholder="Référence (optionnel)" />
+                    <input name="newPartQty" type="number" min="1" defaultValue="1" />
+                    <button type="button" className="outline-button" onClick={(e) => addInterventionPart(e)}><Icon name="plus" size={14} /> Ajouter</button>
+                  </div>
+                </div>
+
+                <div className="detail-section">
+                  <h4>Compte rendu de l&apos;intervention</h4>
+                  <label className="wide-field">Diagnostic<textarea name="diagnostic" defaultValue={draft.diagnostic} placeholder="Diagnostic réalisé…" /></label>
+                  <label className="wide-field">État après intervention<input name="stateAfter" defaultValue={draft.stateAfter} placeholder="Ex. Bon état" /></label>
+                  <label className="wide-field">Observation<textarea name="observation" defaultValue={draft.observation} placeholder="Observations complémentaires…" /></label>
+                  <div className="tests-performed-row">
+                    <span>Essais effectués</span>
+                    <label className="radio-inline"><input type="radio" name="testsPerformed" value="Oui" defaultChecked={draft.testsPerformed === "Oui"} /> Oui</label>
+                    <label className="radio-inline"><input type="radio" name="testsPerformed" value="Non" defaultChecked={draft.testsPerformed === "Non"} /> Non</label>
+                  </div>
+                </div>
+
+                <div className="detail-section">
+                  <h4>Validation</h4>
+                  <div className="detail-grid">
+                    <label>Signature de l&apos;intervenant (nom)<input name="intervenantSignatureName" defaultValue={draft.intervenantSignatureName} placeholder="Nom de l'intervenant" /></label>
+                    <label>Signature du responsable (nom)<input name="responsableName" defaultValue={draft.responsableName} placeholder="Nom du responsable" /></label>
+                  </div>
+                </div>
+
+                <div className="modal-actions">
+                  {!isNewIntervention && (
+                    <button type="button" className="danger-button" onClick={() => { if (window.confirm(`Supprimer la fiche ${draft.id} ?`)) handleDeleteInterventionReport(draft.id); }}><Icon name="trash" size={15} /> Supprimer</button>
+                  )}
+                  <button type="button" className="outline-button" onClick={() => confirmedClose(() => setInterventionDraft(null))}>Annuler</button>
+                  <button type="submit" className="primary-button">Enregistrer <Icon name="save" size={15} /></button>
+                </div>
+              </form>
+            </div>
+          </div>
+        );
+      })()}
 
       {showStockForm && (
         <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) confirmedClose(() => setShowStockForm(false)); }}>
