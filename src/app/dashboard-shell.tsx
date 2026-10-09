@@ -188,6 +188,7 @@ type FleetVehicleIdentity = {
   ownerName: string; bodyType: string; color: string; commercialType: string; registrationDate: string;
   fuel: string; seats: number; grossWeight: number; axles: number; displacement: number;
   fiscalPower: number; curbWeight: number; payload: number; mileage: number; assignedDriver: string;
+  zoneTravail: string;
 };
 
 type Mechanic = {
@@ -693,6 +694,13 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
       return [item.id, item.number, item.center, item.vehiclePlate, item.intervenantName, item.natureOfIntervention].some((field) => field.toLowerCase().includes(search));
     })
     .sort((a, b) => (a.date === b.date ? b.id.localeCompare(a.id) : b.date.localeCompare(a.date)));
+  // Distinct "Zone de travail" values from FleetGest (Parc Auto), used as
+  // the "Centre concerné" dropdown's options in the Fiche d'intervention
+  // module — FleetGest is the source of truth for which centres exist.
+  const fleetCentres = useMemo(
+    () => Array.from(new Set(fleetVehicles.map((v) => v.zoneTravail.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "fr")),
+    [fleetVehicles]
+  );
   const stockMovements = stockExits.filter((item) => isInPeriod(item.date, stockPeriod.from, stockPeriod.to));
   const dashboardExits = stockExits.filter((item) => isInPeriod(item.date, dashboardPeriod.from, dashboardPeriod.to));
   const displayedStock = useMemo(() => {
@@ -882,8 +890,12 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
     if (!showVehicleForm) {
       setFleetVehiclePick(null);
       setFleetVehicleSearch("");
-      return;
     }
+    // Also needed (read-only) for the "Centre concerné" dropdown in the
+    // Fiche d'intervention modal, which is sourced from FleetGest's "Zone
+    // de travail" field — so fetch whenever either modal that needs it
+    // is open.
+    if (!showVehicleForm && interventionModalClosed) return;
     let cancelled = false;
     fetch("/api/fleet-vehicles")
       .then((res) => res.json())
@@ -897,7 +909,7 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
         if (!cancelled) setFleetVehiclesConfigured(false);
       });
     return () => { cancelled = true; };
-  }, [showVehicleForm]);
+  }, [showVehicleForm, interventionModalClosed]);
 
   function flash(message: string) {
     setNotice(message);
@@ -2565,9 +2577,25 @@ export default function DashboardShell({ currentUser, onLogout }: DashboardShell
               </div>
               <form onChange={() => setModalDirty(true)} onSubmit={handleSaveInterventionReport}>
                 <div className="detail-grid">
-                  <label>Centre concerné<input name="center" defaultValue={draft.center} placeholder="Ex. SOCOB Agboville" /></label>
+                  <label>Centre concerné
+                    {fleetCentres.length > 0 ? (
+                      <select name="center" defaultValue={draft.center}>
+                        <option value="" disabled={draft.center !== ""}>Sélectionner un centre…</option>
+                        {draft.center && !fleetCentres.includes(draft.center) && <option value={draft.center}>{draft.center}</option>}
+                        {fleetCentres.map((centre) => <option key={centre} value={centre}>{centre}</option>)}
+                      </select>
+                    ) : (
+                      <input name="center" defaultValue={draft.center} placeholder="Ex. SOCOB Agboville" title="Liste FleetGest indisponible — saisie manuelle" />
+                    )}
+                  </label>
                   <label>Rapport d&apos;intervention N°<input name="number" defaultValue={draft.number} placeholder="Ex. 0000457" /></label>
-                  <label>Véhicule concerné (plaque)<input name="vehiclePlate" defaultValue={draft.vehiclePlate} placeholder="Ex. AB-482-CD" /></label>
+                  <label>Véhicule concerné
+                    <select name="vehiclePlate" defaultValue={draft.vehiclePlate}>
+                      <option value="">Aucun véhicule sélectionné</option>
+                      {draft.vehiclePlate && !vehicles.some((v) => v.plate === draft.vehiclePlate) && <option value={draft.vehiclePlate}>{draft.vehiclePlate}</option>}
+                      {vehicles.map((v) => <option key={v.id} value={v.plate}>{v.plate} — {v.brand} {v.model}</option>)}
+                    </select>
+                  </label>
                   <label>Date de l&apos;intervention<input name="date" type="date" defaultValue={draft.date} /></label>
                   <label>Nom de l&apos;intervenant<input name="intervenantName" defaultValue={draft.intervenantName} placeholder="Nom complet" /></label>
                   <label>Nature de l&apos;intervention<input name="natureOfIntervention" defaultValue={draft.natureOfIntervention} placeholder="Ex. Électricité" /></label>

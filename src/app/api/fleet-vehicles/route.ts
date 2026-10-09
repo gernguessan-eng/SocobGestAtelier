@@ -38,6 +38,10 @@ export type FleetVehicleIdentity = {
   payload: number;
   mileage: number;
   assignedDriver: string;
+  // FleetGest's "Zone de travail" (free-text site/centre name, e.g. "SOCOB
+  // Agboville") — used by socob_GestAtelier to populate the "Centre
+  // concerné" dropdown on the Fiche d'intervention module.
+  zoneTravail: string;
 };
 
 export async function GET() {
@@ -76,6 +80,7 @@ export async function GET() {
         payload: num(data.cu_kg),
         mileage: num(data.kilometrage),
         assignedDriver: String(data.conducteur ?? "").trim(),
+        zoneTravail: String(data.zone_travail ?? "").trim(),
       };
     }).filter((vehicle) => vehicle.plate);
 

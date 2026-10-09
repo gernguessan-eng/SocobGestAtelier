@@ -124,6 +124,15 @@ stockée dans Firestore (`interventionReports`) et synchronisée en temps
 réel comme le reste de l'application ; elle peut être recherchée, modifiée,
 imprimée, exportée en Excel ou supprimée.
 
+Deux champs sont des listes déroulantes plutôt que de la saisie libre :
+
+- **Véhicule concerné** : liste des véhicules du menu "Véhicules" de
+  socob_GestAtelier (même source que les Ordres de réparation).
+- **Centre concerné** : liste des valeurs distinctes du champ "Zone de
+  travail" des véhicules de socobfleetgest (Parc Auto), lue en lecture
+  seule via `/api/fleet-vehicles` (voir "Lien avec FleetGest" ci-dessous).
+  Si FleetGest n'est pas configuré, le champ redevient une saisie libre.
+
 ## Export / import Excel
 
 Chaque module (Ordres de réparation, Mécaniciens, Véhicules, Stocks,
